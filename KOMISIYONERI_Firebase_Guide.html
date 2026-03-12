@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="rw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>KOMISIYONERI — Firebase Hosting Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700&family=DM+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#F4F7FC;color:#0F1B35;line-height:1.7}
+.container{max-width:860px;margin:0 auto;padding:2rem 4%}
+header{background:linear-gradient(135deg,#0D3B8C,#1657CC);padding:3rem 4%;text-align:center;color:#fff}
+header h1{font-family:'Cormorant Garamond',serif;font-size:2.4rem;font-weight:700;margin-bottom:.5rem}
+header p{color:rgba(255,255,255,.72);font-size:.95rem}
+.step-card{background:#fff;border-radius:14px;border:1.5px solid #DDE5F5;padding:2rem;margin:1.5rem 0;box-shadow:0 2px 16px rgba(13,59,140,.08)}
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#0D3B8C,#1657CC);color:#fff;font-family:'Cormorant Garamond',serif;font-size:1.3rem;font-weight:700;margin-bottom:1rem;box-shadow:0 4px 14px rgba(13,59,140,.3)}
+.step-title{font-family:'Cormorant Garamond',serif;font-size:1.4rem;font-weight:700;color:#0D3B8C;margin-bottom:.75rem}
+.step-desc{font-size:.9rem;color:#6B7A99;margin-bottom:1.1rem;line-height:1.75}
+code{background:#0F1B35;color:#4ade80;padding:.2rem .55rem;border-radius:5px;font-family:'JetBrains Mono',monospace;font-size:.82rem}
+pre{background:#0F1B35;border-radius:10px;padding:1.2rem 1.4rem;overflow-x:auto;margin:.8rem 0}
+pre code{background:none;padding:0;color:#e2e8f0;font-size:.84rem;display:block;line-height:1.85}
+pre code .cmd{color:#4ade80}
+pre code .cmt{color:#64748b;font-style:italic}
+pre code .key{color:#93c5fd}
+pre code .val{color:#fcd34d}
+pre code .str{color:#86efac}
+.tip{background:rgba(39,168,74,.08);border-left:4px solid #27A84A;border-radius:0 10px 10px 0;padding:1rem 1.2rem;margin:.9rem 0;font-size:.87rem;color:#1a7a35}
+.warn{background:rgba(245,166,35,.1);border-left:4px solid #F5A623;border-radius:0 10px 10px 0;padding:1rem 1.2rem;margin:.9rem 0;font-size:.87rem;color:#7A5500}
+.file-tree{background:#0F1B35;border-radius:10px;padding:1.2rem 1.4rem;font-family:'JetBrains Mono',monospace;font-size:.83rem;line-height:2;color:#e2e8f0}
+.ft-folder{color:#93c5fd}.ft-file{color:#86efac}.ft-comment{color:#64748b}
+.badge{display:inline-block;padding:.2rem .7rem;border-radius:100px;font-size:.7rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin-left:.5rem}
+.b-free{background:rgba(39,168,74,.15);color:#1a7a35}
+.b-req{background:rgba(245,166,35,.2);color:#7A5500}
+ul.check{list-style:none;display:flex;flex-direction:column;gap:.5rem}
+ul.check li::before{content:'✓ ';color:#27A84A;font-weight:700}
+.final-box{background:linear-gradient(135deg,#0D3B8C,#1657CC);border-radius:16px;padding:2.5rem;text-align:center;color:#fff;margin:2rem 0}
+.final-box h2{font-family:'Cormorant Garamond',serif;font-size:2rem;font-weight:700;margin-bottom:.6rem}
+.final-box p{color:rgba(255,255,255,.7);font-size:.92rem;margin-bottom:1.5rem}
+.url-pill{display:inline-block;background:rgba(255,255,255,.12);border:1.5px solid rgba(255,255,255,.25);border-radius:100px;padding:.55rem 1.5rem;font-family:'JetBrains Mono',monospace;font-size:.95rem;font-weight:600;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:.86rem;margin:.8rem 0}
+th{background:#F4F7FC;padding:.7rem 1rem;text-align:left;font-weight:700;color:#0D3B8C;font-size:.75rem;letter-spacing:.1em;text-transform:uppercase}
+td{padding:.7rem 1rem;border-top:1px solid #DDE5F5}
+tr:hover td{background:#f8faff}
+</style>
+</head>
+<body>
+<header>
+  <div style="font-size:.68rem;letter-spacing:.22em;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:.5rem">KOMISIYONERI Connectpro Services</div>
+  <h1>Guide ya Firebase Hosting</h1>
+  <p>Intambwe zose zo gushyira KOMISIYONERI Platform online kuri Google</p>
+</header>
+
+<div class="container">
+
+  <!-- OVERVIEW -->
+  <div class="step-card" style="border-color:#F5A623">
+    <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem">
+      <div style="width:48px;height:48px;border-radius:12px;background:rgba(245,166,35,.15);display:flex;align-items:center;justify-content:center">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8B6A00" stroke-width="1.8"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <div>
+        <div style="font-family:'Cormorant Garamond',serif;font-size:1.35rem;font-weight:700;color:#0D3B8C">Firebase Hosting — Amakuru y'Ingenzi</div>
+        <div style="font-size:.8rem;color:#6B7A99">Google Firebase — Bwiza, Bwihuse, Ubuntu</div>
+      </div>
+    </div>
+    <table>
+      <tr><th>Ibintu</th><th>Firebase Free (Spark)</th><th>Firebase Pro (Blaze)</th></tr>
+      <tr><td>Hosting space</td><td>10 GB <span class="badge b-free">FREE</span></td><td>Unlimited</td></tr>
+      <tr><td>Data transfer</td><td>360 MB/siku <span class="badge b-free">FREE</span></td><td>Unlimited</td></tr>
+      <tr><td>Custom domain (komisiyoneri.com)</td><td>✓ <span class="badge b-free">FREE</span></td><td>✓</td></tr>
+      <tr><td>SSL Certificate (HTTPS)</td><td>✓ Automatic <span class="badge b-free">FREE</span></td><td>✓</td></tr>
+      <tr><td>CDN (speed worldwide)</td><td>✓ <span class="badge b-free">FREE</span></td><td>✓</td></tr>
+      <tr><td>Multiple sites</td><td>Up to 10 <span class="badge b-free">FREE</span></td><td>Unlimited</td></tr>
+    </table>
+    <div class="tip">🎉 <strong>Amahirwe meza:</strong> Firebase Hosting ya Google ni <strong>ubuntu</strong> kuri platform nka KOMISIYONERI — nta mafaranga asabwa kutangira!</div>
+  </div>
+
+  <!-- FILES STRUCTURE -->
+  <div class="step-card">
+    <div class="step-num">0</div>
+    <div class="step-title">Uko Files Zigomba Kugaragara mu Mubyimba</div>
+    <div class="step-desc">Mbere yo gutangira, tegura aya mafiles mu mubyimba (folder) <code>komisiyoneri/</code> kuri mudasobwa yawe:</div>
+    <div class="file-tree">
+      <div class="ft-folder">📁 komisiyoneri/  <span class="ft-comment">(principal folder yawe)</span></div>
+      <div style="padding-left:1.5rem">
+        <div class="ft-folder">📁 public/  <span class="ft-comment">(Firebase igashyira files zose hano)</span></div>
+        <div style="padding-left:1.5rem">
+          <div class="ft-file">📄 index.html  <span class="ft-comment">← KOMISIYONERI_Platform.html</span></div>
+          <div class="ft-file">📄 manifest.json  <span class="ft-comment">← PWA manifest</span></div>
+          <div class="ft-file">📄 robots.txt  <span class="ft-comment">← Google crawler</span></div>
+          <div class="ft-file">📄 sitemap.xml  <span class="ft-comment">← Google Search</span></div>
+          <div class="ft-file">📄 404.html  <span class="ft-comment">← Page ntiboneka (optional)</span></div>
+        </div>
+        <div class="ft-file">📄 firebase.json  <span class="ft-comment">← Firebase config (igakorwa vuba)</span></div>
+        <div class="ft-file">📄 .firebaserc  <span class="ft-comment">← Project ID (igakorwa vuba)</span></div>
+      </div>
+    </div>
+    <div class="tip"><strong>Intambwe:</strong> Rename <code>KOMISIYONERI_Platform.html</code> ugore <code>index.html</code> — hanyuma ushyire mu folder <code>public/</code></div>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="step-card">
+    <div class="step-num">1</div>
+    <div class="step-title">Jya kuri Google Firebase Console — Fungura Konti</div>
+    <div class="step-desc">Jya kuri <strong>firebase.google.com</strong> ukoresha konti yawe ya Google (Gmail). Firebase igabanuka Google Project.</div>
+    <ul class="check">
+      <li>Kanda <strong>"Go to Console"</strong> hanyuma <strong>"Create a Project"</strong></li>
+      <li>Ita project yawe: <code>komisiyoneri</code> cyangwa <code>komisiyoneri-rw</code></li>
+      <li>Google Analytics: <strong>Enable</strong> (ni ingenzi kuri SEO)</li>
+      <li>Kanda <strong>"Create Project"</strong> — birakozwe mu masegonda 30</li>
+    </ul>
+    <div class="warn">⚠️ <strong>Ijambo ry'Ahabanza:</strong> Project ID (nk. <code>komisiyoneri-rw</code>) ntishobora guhinduka nyuma yo kuyiremaho. Hitamo neza!</div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="step-card">
+    <div class="step-num">2</div>
+    <div class="step-title">Shyira Node.js na Firebase CLI kuri Mudasobwa Yawe</div>
+    <div class="step-desc">Firebase CLI (Command Line Interface) niyo ikora deploy. Igomba Node.js kugira ngo ikore.</div>
+    <div style="font-size:.8rem;font-weight:700;color:#6B7A99;letter-spacing:.12em;text-transform:uppercase;margin-bottom:.5rem">Windows — Kanda kandi urokote:</div>
+    <pre><code><span class="cmt"># 1. Shyira Node.js (koresha installer):</span>
+<span class="cmd">https://nodejs.org/en/download</span>   <span class="cmt"># ← Fyata iyi link mu browser</span>
+
+<span class="cmt"># 2. Emeza ko Node yashyizwe (fungura Command Prompt / Terminal):</span>
+<span class="cmd">node --version</span>     <span class="cmt"># Igomba kugaragara: v18.x.x cyangwa hejuru</span>
+<span class="cmd">npm --version</span>      <span class="cmt"># Igomba kugaragara: 9.x.x cyangwa hejuru</span>
+
+<span class="cmt"># 3. Shyira Firebase CLI:</span>
+<span class="cmd">npm install -g firebase-tools</span>
+
+<span class="cmt"># 4. Emeza ko Firebase yashyizwe:</span>
+<span class="cmd">firebase --version</span>  <span class="cmt"># Igomba kugaragara: 13.x.x</span></code></pre>
+    <div class="tip">💡 Niba ukoresha <strong>Mac</strong>, binyuranye gusa aha: <code>sudo npm install -g firebase-tools</code></div>
+  </div>
+
+  <!-- STEP 3 -->
+  <div class="step-card">
+    <div class="step-num">3</div>
+    <div class="step-title">Login Firebase na Google Account Yawe</div>
+    <div class="step-desc">Injira Firebase CLI ukoresha Gmail yawe ya Google (imwe wishyiriyeho Firebase Console).</div>
+    <pre><code><span class="cmt"># Fungura Terminal/Command Prompt, wandike:</span>
+<span class="cmd">firebase login</span>
+
+<span class="cmt"># Browser izafunguka — injira na Gmail yawe
+# Nyuma yo kwinjira, uzabona:</span>
+<span class="str">✔  Success! Logged in as you@gmail.com</span></code></pre>
+  </div>
+
+  <!-- STEP 4 -->
+  <div class="step-card">
+    <div class="step-num">4</div>
+    <div class="step-title">Tegura Firebase mu Mubyimba wa KOMISIYONERI</div>
+    <div class="step-desc">Jya mu mubyimba <code>komisiyoneri/</code> (aho ufite files zose), hanyuma utangize Firebase.</div>
+    <pre><code><span class="cmt"># Jya mu mubyimba wawe (hindura inzira nk'uko iri kuri mudasobwa yawe):</span>
+<span class="cmd">cd C:\Users\YourName\Documents\komisiyoneri</span>   <span class="cmt"># Windows</span>
+<span class="cmd">cd ~/Documents/komisiyoneri</span>                    <span class="cmt"># Mac/Linux</span>
+
+<span class="cmt"># Tangiza Firebase mu mubyimba:</span>
+<span class="cmd">firebase init hosting</span>
+
+<span class="cmt"># Ibibazo Firebase izakubaza (subira uku):</span>
+<span class="str">? Which Firebase project do you want to use?</span>
+  → <span class="val">komisiyoneri-rw</span>  <span class="cmt">(hitamo project yawe)</span>
+
+<span class="str">? What do you want to use as your public directory?</span>
+  → <span class="val">public</span>           <span class="cmt">(andika "public" hanyuma Enter)</span>
+
+<span class="str">? Configure as a single-page app (rewrite all urls to /index.html)?</span>
+  → <span class="val">Yes</span>              <span class="cmt">(andika "y" hanyuma Enter)</span>
+
+<span class="str">? Set up automatic builds and deploys with GitHub?</span>
+  → <span class="val">No</span>               <span class="cmt">(andika "n" hanyuma Enter)</span>
+
+<span class="str">? File public/index.html already exists. Overwrite?</span>
+  → <span class="val">No</span>               <span class="cmt">(andika "n" — reka index.html yawe)</span></code></pre>
+    <div class="tip">✅ Nyuma y'ibibazo, Firebase izaremaho <code>firebase.json</code> na <code>.firebaserc</code> mu mubyimba wawe.</div>
+  </div>
+
+  <!-- STEP 5 -->
+  <div class="step-card">
+    <div class="step-num">5</div>
+    <div class="step-title">Hindura firebase.json — Wongere Ibyiza</div>
+    <div class="step-desc">Fungura <code>firebase.json</code> ukoresha Notepad cyangwa VS Code, usimbuze iki:</div>
+    <pre><code>{
+  <span class="key">"hosting"</span>: {
+    <span class="key">"public"</span>: <span class="str">"public"</span>,
+    <span class="key">"ignore"</span>: [<span class="str">"firebase.json"</span>, <span class="str">"**/.*"</span>, <span class="str">"**/node_modules/**"</span>],
+    <span class="key">"rewrites"</span>: [
+      { <span class="key">"source"</span>: <span class="str">"**"</span>, <span class="key">"destination"</span>: <span class="str">"/index.html"</span> }
+    ],
+    <span class="key">"headers"</span>: [
+      {
+        <span class="key">"source"</span>: <span class="str">"**/*.html"</span>,
+        <span class="key">"headers"</span>: [
+          { <span class="key">"key"</span>: <span class="str">"Cache-Control"</span>, <span class="key">"value"</span>: <span class="str">"public, max-age=3600"</span> },
+          { <span class="key">"key"</span>: <span class="str">"X-Content-Type-Options"</span>, <span class="key">"value"</span>: <span class="str">"nosniff"</span> },
+          { <span class="key">"key"</span>: <span class="str">"X-Frame-Options"</span>, <span class="key">"value"</span>: <span class="str">"SAMEORIGIN"</span> },
+          { <span class="key">"key"</span>: <span class="str">"X-XSS-Protection"</span>, <span class="key">"value"</span>: <span class="str">"1; mode=block"</span> },
+          { <span class="key">"key"</span>: <span class="str">"Referrer-Policy"</span>, <span class="key">"value"</span>: <span class="str">"strict-origin-when-cross-origin"</span> }
+        ]
+      },
+      {
+        <span class="key">"source"</span>: <span class="str">"**/*.@(js|css|svg|png|jpg|jpeg|gif|webp|ico|woff2)"</span>,
+        <span class="key">"headers"</span>: [
+          { <span class="key">"key"</span>: <span class="str">"Cache-Control"</span>, <span class="key">"value"</span>: <span class="str">"public, max-age=31536000, immutable"</span> }
+        ]
+      }
+    ],
+    <span class="key">"cleanUrls"</span>: true,
+    <span class="key">"trailingSlash"</span>: false
+  }
+}</code></pre>
+    <div class="tip">💡 Headers ziri hejuru zikangurira <strong>security</strong> na <strong>speed</strong> — byose biri mu Google Lighthouse score yawe!</div>
+  </div>
+
+  <!-- STEP 6 -->
+  <div class="step-card">
+    <div class="step-num">6</div>
+    <div class="step-title">Deploy! — Ohereza Platform kuri Google</div>
+    <div class="step-desc">Iki ni intambwe y'ingirakamaro — ohereza files zose kuri Firebase.</div>
+    <pre><code><span class="cmt"># Mu mubyimba wa komisiyoneri/ wandike:</span>
+<span class="cmd">firebase deploy --only hosting</span>
+
+<span class="cmt"># Uzabona ibi birambye (bisaba amasegonda 10-30):</span>
+<span class="str">=== Deploying to 'komisiyoneri-rw'...
+i  deploying hosting
+i  hosting[komisiyoneri-rw]: beginning deploy...
+i  hosting[komisiyoneri-rw]: found 4 files in public
+✔  hosting[komisiyoneri-rw]: file upload complete
+i  hosting[komisiyoneri-rw]: finalizing version...
+✔  hosting[komisiyoneri-rw]: version finalized
+✔  hosting[komisiyoneri-rw]: release complete
+
+✔  Deploy complete!
+
+Project Console: https://console.firebase.google.com/project/komisiyoneri-rw
+Hosting URL: https://komisiyoneri-rw.web.app</span></code></pre>
+    <div class="tip">🎉 <strong>Yashoboye!</strong> Platform yawe ni online kuri <code>https://komisiyoneri-rw.web.app</code> — Google irayibona ubu!</div>
+  </div>
+
+  <!-- STEP 7 — CUSTOM DOMAIN -->
+  <div class="step-card">
+    <div class="step-num">7</div>
+    <div class="step-title">Shyira Domain Yawe — komisiyoneri.com</div>
+    <div class="step-desc">Firebase itanga SSL certificate ubuntu kuri domain yawe. Aya ni amabwiriza yo guhuza <code>www.komisiyoneri.com</code>:</div>
+    <ul class="check" style="margin-bottom:1rem">
+      <li>Jya kuri <strong>Firebase Console → Hosting → Add custom domain</strong></li>
+      <li>Andika <code>komisiyoneri.com</code> hanyuma kanda <strong>Continue</strong></li>
+      <li>Firebase izakuha <strong>DNS records 2</strong> (A records cyangwa TXT record)</li>
+      <li>Jya kuri domain registrar yawe (GoDaddy, Namecheap, Rwanda...) ushyireho records</li>
+      <li>Tegereza amasaha 24-48 — SSL certificate iraboneka Ubuntu</li>
+    </ul>
+    <pre><code><span class="cmt"># DNS Records Firebase izakuha (ingero):</span>
+<span class="key">Type</span>    <span class="key">Host</span>     <span class="key">Value</span>
+<span class="val">A</span>       <span class="str">@</span>        <span class="str">151.101.1.195</span>
+<span class="val">A</span>       <span class="str">@</span>        <span class="str">151.101.65.195</span>
+<span class="val">CNAME</span>   <span class="str">www</span>      <span class="str">komisiyoneri-rw.web.app</span></code></pre>
+    <div class="warn">⚠️ DNS records zishobora gufata amasaa 24-48 kugira ngo zikorere. Birashoboka!</div>
+  </div>
+
+  <!-- STEP 8 — GOOGLE SEARCH CONSOLE -->
+  <div class="step-card">
+    <div class="step-num">8</div>
+    <div class="step-title">Iyandikishe kuri Google Search Console</div>
+    <div class="step-desc">Google Search Console niyo ikemura ko Google ibona sitewayisitiwe yawe neza kandi iyandike mu search results.</div>
+    <ul class="check" style="margin-bottom:1rem">
+      <li>Jya kuri <strong>search.google.com/search-console</strong></li>
+      <li>Kanda <strong>"Add property"</strong> → Shyira <code>https://www.komisiyoneri.com</code></li>
+      <li>Emeza ownership (Firebase igakorwa vuba cyangwa HTML tag)</li>
+      <li>Kanda <strong>"Sitemaps"</strong> → Shyira <code>https://www.komisiyoneri.com/sitemap.xml</code></li>
+      <li>Tegereza amasaa 24-72 — Google itangira guhuza platform yawe!</li>
+    </ul>
+    <div class="tip">✅ Nyuma y'ibyumweru 2-4, uzabona KOMISIYONERI mu results za Google Search kuri <strong>"inzu Kigali"</strong>, <strong>"kugura inzu Rwanda"</strong>, na keywords zindi!</div>
+  </div>
+
+  <!-- STEP 9 — GA4 -->
+  <div class="step-card">
+    <div class="step-num">9</div>
+    <div class="step-title">Shyira Google Analytics 4 (GA4) — Reba Abasuye</div>
+    <div class="step-desc">Jya mu Platform HTML yawe, usimbuze <code>G-XXXXXXXXXX</code> na ID yawe ya GA4:</div>
+    <ul class="check" style="margin-bottom:1rem">
+      <li>Jya kuri <strong>analytics.google.com</strong></li>
+      <li>Kanda <strong>"Create property"</strong> → Ita <code>KOMISIYONERI</code></li>
+      <li>Firebase igufasha guhuza — kanda <strong>"Link to Firebase"</strong></li>
+      <li>Fyata <strong>Measurement ID</strong> (nk. <code>G-ABC123XYZ</code>)</li>
+      <li>Simbura <code>G-XXXXXXXXXX</code> mu HTML yawe na ID yawe ya nyayo</li>
+      <li>Deploy nanone: <code>firebase deploy --only hosting</code></li>
+    </ul>
+    <pre><code><span class="cmt">&lt;!-- Mu HTML yawe (lines 2 ziri mu head), simbura: --&gt;</span>
+<span class="str">G-XXXXXXXXXX</span>  →  <span class="val">G-ABC123XYZ</span>  <span class="cmt">(Measurement ID yawe ya nyayo)</span></code></pre>
+  </div>
+
+  <!-- DEPLOY UPDATES -->
+  <div class="step-card" style="border-color:#27A84A">
+    <div class="step-num" style="background:linear-gradient(135deg,#1a7a35,#27A84A)">🔄</div>
+    <div class="step-title" style="color:#1a7a35">Update Platform nyuma — Uko Bikorwa</div>
+    <div class="step-desc">Buri gihe ushaka guhindura platform (imitungo nshya, design, prices...) bikora vuba cyane:</div>
+    <pre><code><span class="cmt"># 1. Hindura index.html (KOMISIYONERI_Platform.html) yawe</span>
+<span class="cmt"># 2. Shyira file nshya mu public/ folder</span>
+<span class="cmt"># 3. Ohereza kuri Firebase:</span>
+<span class="cmd">firebase deploy --only hosting</span>
+
+<span class="cmt"># Bisaba amasegonda 15-30 gusa!
+# Platform yawe kuri internet izahinduka vuba.</span>
+
+<span class="cmt"># Reba history ya deploys yawe:</span>
+<span class="cmd">firebase hosting:channel:list</span></code></pre>
+    <div class="tip">🚀 Firebase ifite <strong>automatic rollback</strong> — niba update nshya yananiwe, ushobora gusubira kuri version ya kera mu masegonda make!</div>
+  </div>
+
+  <!-- FINAL BOX -->
+  <div class="final-box">
+    <h2>KOMISIYONERI ni Online kuri Google!</h2>
+    <p>Nyuma y'intambwe zose, platform yawe izaboneka kuri izi links:</p>
+    <div style="display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap;margin-bottom:1rem">
+      <div class="url-pill">🌐 komisiyoneri-rw.web.app</div>
+      <div class="url-pill">🌐 www.komisiyoneri.com</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-top:1.5rem;max-width:600px;margin-left:auto;margin-right:auto">
+      <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:1rem;text-align:center"><div style="font-size:1.5rem;font-weight:700;font-family:'Cormorant Garamond',serif">HTTPS</div><div style="font-size:.7rem;color:rgba(255,255,255,.6);margin-top:.2rem">SSL Automatic</div></div>
+      <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:1rem;text-align:center"><div style="font-size:1.5rem;font-weight:700;font-family:'Cormorant Garamond',serif">CDN</div><div style="font-size:.7rem;color:rgba(255,255,255,.6);margin-top:.2rem">Global Speed</div></div>
+      <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:1rem;text-align:center"><div style="font-size:1.5rem;font-weight:700;font-family:'Cormorant Garamond',serif">FREE</div><div style="font-size:.7rem;color:rgba(255,255,255,.6);margin-top:.2rem">Firebase Spark</div></div>
+    </div>
+  </div>
+
+  <div style="text-align:center;padding:1.5rem 0;font-size:.78rem;color:#6B7A99">
+    © 2025 KOMISIYONERI Connectpro Services Ltd · info@komisiyoneri.com · www.komisiyoneri.com
+  </div>
+</div>
+</body>
+</html>

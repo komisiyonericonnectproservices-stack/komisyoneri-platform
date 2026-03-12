@@ -1,0 +1,22 @@
+# KOMISIYONERI Connectpro Services
+# www.komisiyoneri.com
+
+User-agent: *
+Allow: /
+
+# Important pages to index
+Allow: /listings
+Allow: /analytics
+Allow: /about
+
+# Disallow admin/private pages
+Disallow: /dashboard
+Disallow: /auth
+Disallow: /admin
+Disallow: /api/
+
+# Sitemap location
+Sitemap: https://www.komisiyoneri.com/sitemap.xml
+
+# Crawl delay (be nice to the server)
+Crawl-delay: 1
