@@ -1,5 +1,5 @@
 # KOMISIYONERI Connectpro Services
-# www.komisiyoneri.com
+# komisiyoneri.co.rw
 
 User-agent: *
 Allow: /
@@ -8,15 +8,22 @@ Allow: /
 Allow: /listings
 Allow: /analytics
 Allow: /about
+Allow: /agents
 
 # Disallow admin/private pages
 Disallow: /dashboard
 Disallow: /auth
 Disallow: /admin
+Disallow: /profile
 Disallow: /api/
+Disallow: /staff-login.html
+Disallow: /partner-login.html
 
 # Sitemap location
-Sitemap: https://www.komisiyoneri.com/sitemap.xml
+Sitemap: https://komisiyoneri.co.rw/sitemap.xml
+
+# AI/LLM discoverability summary
+# https://komisiyoneri.co.rw/llms.txt
 
 # Crawl delay (be nice to the server)
 Crawl-delay: 1

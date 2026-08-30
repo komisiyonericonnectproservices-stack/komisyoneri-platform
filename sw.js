@@ -1,8 +1,43 @@
-// KOMISIYONERI — Service Worker v3.0
-// PWA: Offline support + Fast loading
-
-const CACHE = 'komisiyoneri-v3';
-const PRECACHE = ['/', '/index.html', '/manifest.json', '/icon-192.svg', '/icon-512.svg'];
+// KOMISIYONERI — Service Worker v4.1
+// PWA: Offline support + Fast loading (stale-while-revalidate)
+//
+// v7: precache now includes the real icon-192.png/icon-512.png (manifest.json
+// was updated to reference these — they existed on disk but were never wired
+// into the manifest, which is the confirmed root cause of installs silently
+// failing/disappearing on some Android Chrome/WebView versions: an
+// SVG-only icon set with no 512 "any"-purpose entry has known installability
+// and WebAPK-icon-rendering issues on several OEM browsers).
+//
+// v8: icon-192.png/icon-512.png were, since some earlier point, an unrelated
+// blue/green two-people handshake graphic instead of the real navy/white-
+// house/gold-square brand mark (confirmed correct via icon-192.svg/
+// icon-512.svg, and via the actual PWA splash screen, which is generated
+// from those SVGs and already showed the right logo). Regenerated both PNGs
+// from the SVG source. Cache bumped so browsers that already precached the
+// wrong PNG fetch the corrected one instead of serving it from cache.
+//
+// v9: root cause of "different devices show different stale versions after
+// a deploy" — this app has no build step, so /js/*.js and /css/*.css files
+// keep the exact same filename across every deploy (no content hash to bust
+// the cache with, unlike index.html which is already correctly network-
+// first below). Every same-origin script/style request was going through
+// the generic stale-while-revalidate branch: serve whatever's already in
+// this cache immediately, only fetch+store the new version in the
+// background for NEXT time. That means the very first load after a deploy
+// that changed app.js-equivalent logic — the inline <script>s are fine
+// since they ship inside index.html itself, but css/header.css,
+// css/bottom-nav.css, css/fab.css, js/portal-login.js, js/districts.js all
+// hit this — served the visitor's already-cached, pre-deploy copy, with no
+// way to know a newer one existed until a second reload happened to land
+// after the background refetch finished. Scripts/styles/the manifest now
+// use the same network-first strategy as navigations instead (see FETCH
+// below); genuinely static assets (icons, images) keep
+// stale-while-revalidate, which is the right tradeoff for those since they
+// aren't where app *behavior* lives. Cache bumped so every client's stale
+// v8 entries for these files are dropped immediately on activate rather
+// than lingering until they'd have expired on their own.
+const CACHE = 'komisiyoneri-v9';
+const PRECACHE = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon-192.svg', '/icon-512.svg', '/images/kigali-skyline.webp'];
 
 // INSTALL
 self.addEventListener('install', e => {
@@ -22,25 +57,62 @@ self.addEventListener('activate', e => {
   );
 });
 
-// FETCH — Network first, cache fallback
+// FETCH
+// - Navigations (the HTML shell) AND same-origin scripts/styles/manifest:
+//   network-first, so a deploy is visible on the very next load instead of
+//   however long it takes the stale-while-revalidate background refetch
+//   below to catch up. This app has no build step / content-hashed
+//   filenames, so this is the substitute for "the URL changes, so the old
+//   cache entry is naturally orphaned" — network-first means every request
+//   for one of these actually re-checks with the server first.
+// - Everything else (icons, images): stale-while-revalidate — serve the
+//   cached copy instantly, then refresh it in the background for next
+//   time. Safe here specifically because these are static brand assets,
+//   not where app behavior/bugfixes live.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   if (e.request.url.includes('/api/')) return;
   if (!e.request.url.startsWith(self.location.origin)) return;
 
+  const isAppCode = e.request.mode === 'navigate'
+    || e.request.destination === 'script'
+    || e.request.destination === 'style'
+    || e.request.destination === 'manifest'
+    || /\.(js|css)$/.test(new URL(e.request.url).pathname);
+
+  if (isAppCode) {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE).then(c => c.put(e.request, clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(e.request).then(cached => cached || caches.match('/')))
+    );
+    return;
+  }
+
   e.respondWith(
-    fetch(e.request)
-      .then(res => {
-        if (res && res.status === 200) {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+    caches.open(CACHE).then(cache =>
+      cache.match(e.request).then(cached => {
+        const networkFetch = fetch(e.request)
+          .then(res => {
+            if (res && res.status === 200) cache.put(e.request, res.clone());
+            return res;
+          })
+          .catch(() => null);
+
+        if (cached) {
+          // Serve the cached response immediately; refresh the cache in the background.
+          networkFetch.catch(() => {});
+          return cached;
         }
-        return res;
-      })
-      .catch(() =>
-        caches.match(e.request).then(cached => {
-          if (cached) return cached;
-          if (e.request.mode === 'navigate') return caches.match('/');
+
+        return networkFetch.then(res => {
+          if (res) return res;
           // Offline image placeholder
           if (e.request.destination === 'image') {
             return new Response(
@@ -48,8 +120,9 @@ self.addEventListener('fetch', e => {
               { headers: { 'Content-Type': 'image/svg+xml' } }
             );
           }
-        })
-      )
+        });
+      })
+    )
   );
 });
 
@@ -59,8 +132,8 @@ self.addEventListener('push', e => {
   e.waitUntil(
     self.registration.showNotification(data.title || 'KOMISIYONERI', {
       body: data.body || 'Fungura platform ubone amakuru mashya',
-      icon: '/icon-192.svg',
-      badge: '/icon-192.svg',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
       tag: 'komisiyoneri',
       data: { url: data.url || '/' }
     })
@@ -72,4 +145,4 @@ self.addEventListener('notificationclick', e => {
   e.waitUntil(clients.openWindow(e.notification.data?.url || '/'));
 });
 
-console.log('[KOMISIYONERI SW v3] Loaded ✅');
+console.log('[KOMISIYONERI SW] Loaded — cache: ' + CACHE);

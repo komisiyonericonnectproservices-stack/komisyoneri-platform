@@ -67,7 +67,7 @@ tr:hover td{background:#f8faff}
       <tr><th>Ibintu</th><th>Firebase Free (Spark)</th><th>Firebase Pro (Blaze)</th></tr>
       <tr><td>Hosting space</td><td>10 GB <span class="badge b-free">FREE</span></td><td>Unlimited</td></tr>
       <tr><td>Data transfer</td><td>360 MB/siku <span class="badge b-free">FREE</span></td><td>Unlimited</td></tr>
-      <tr><td>Custom domain (komisiyoneri.com)</td><td>✓ <span class="badge b-free">FREE</span></td><td>✓</td></tr>
+      <tr><td>Custom domain (komisiyoneri.co.rw)</td><td>✓ <span class="badge b-free">FREE</span></td><td>✓</td></tr>
       <tr><td>SSL Certificate (HTTPS)</td><td>✓ Automatic <span class="badge b-free">FREE</span></td><td>✓</td></tr>
       <tr><td>CDN (speed worldwide)</td><td>✓ <span class="badge b-free">FREE</span></td><td>✓</td></tr>
       <tr><td>Multiple sites</td><td>Up to 10 <span class="badge b-free">FREE</span></td><td>Unlimited</td></tr>
@@ -238,14 +238,32 @@ Hosting URL: https://komisiyoneri-rw.web.app</span></code></pre>
     <div class="tip">🎉 <strong>Yashoboye!</strong> Platform yawe ni online kuri <code>https://komisiyoneri-rw.web.app</code> — Google irayibona ubu!</div>
   </div>
 
-  <!-- STEP 7 — CUSTOM DOMAIN -->
+  <!-- STEP 7 — DEPLOY SECURITY RULES (REQUIRED — photo upload, and every other
+       Firestore/Storage-backed feature, silently fails without this) -->
+  <div class="step-card" style="border-color:#F5A623;border-width:2px">
+    <div class="step-num" style="background:linear-gradient(135deg,#7A5500,#F5A623)">⚠️</div>
+    <div class="step-title" style="color:#7A5500">BISABWA — Deploy Firestore &amp; Storage Rules</div>
+    <div class="step-desc"><code>firebase deploy --only hosting</code> (intambwe 6, hejuru) yohereza gusa website yawe (HTML/CSS/JS). NTIOHEREZA <code>rules/firestore.rules</code> cyangwa <code>rules/storage.rules</code> — nubwo files zombi ziri muri <code>firebase.json</code> kandi ziri muri git. Aka gace ni ko gatuma <strong>gushyiraho amafoto y'imitungo bidakora</strong> (na feature zindi zikoresha Firestore/Storage zikaba zidakingiwe neza): Firebase Storage isanzwe ifunze burundu (<code>allow read, write: if false</code>) niba nta rules zawe zohererejwe — kandi ntawuzabimenya keretse yohereje aya makuru ku bushake, kuko iyi guide yavuze <code>--only hosting</code> gusa kuva kera.</div>
+    <pre><code><span class="cmt"># Emeza ko uri mu mubyimba wa komisiyoneri/, hanyuma wandike aya yombi</span>
+<span class="cmt"># (rimwe rukumbi bihagije — gusubiramo ntacyo bitwaye niba wongeye ku rules):</span>
+<span class="cmd">firebase deploy --only firestore:rules,firestore:indexes,storage</span>
+
+<span class="cmt"># Niba ufite Cloud Functions (mu bubiko bwa functions/) nazo zohereza:</span>
+<span class="cmd">firebase deploy --only functions</span>
+
+<span class="cmt"># Cyangwa byose rimwe (hosting + rules + indexes + functions):</span>
+<span class="cmd">firebase deploy</span></code></pre>
+    <div class="warn">⚠️ Buri gihe wongeye guhindura <code>rules/firestore.rules</code> cyangwa <code>rules/storage.rules</code> (cyangwa se AI ikuboneshereje impinduka muri izi files), ugomba KONGERA gukoresha iyi command — guhindura file muri git ntibihindura ikintu na kimwe ku Firebase y'ukuri (production) keretse wayoherereje ukoresheje <code>firebase deploy</code>.</div>
+  </div>
+
+  <!-- STEP 8 — CUSTOM DOMAIN -->
   <div class="step-card">
-    <div class="step-num">7</div>
-    <div class="step-title">Shyira Domain Yawe — komisiyoneri.com</div>
-    <div class="step-desc">Firebase itanga SSL certificate ubuntu kuri domain yawe. Aya ni amabwiriza yo guhuza <code>www.komisiyoneri.com</code>:</div>
+    <div class="step-num">8</div>
+    <div class="step-title">Shyira Domain Yawe — komisiyoneri.co.rw</div>
+    <div class="step-desc">Firebase itanga SSL certificate ubuntu kuri domain yawe. Aya ni amabwiriza yo guhuza <code>komisiyoneri.co.rw</code>:</div>
     <ul class="check" style="margin-bottom:1rem">
       <li>Jya kuri <strong>Firebase Console → Hosting → Add custom domain</strong></li>
-      <li>Andika <code>komisiyoneri.com</code> hanyuma kanda <strong>Continue</strong></li>
+      <li>Andika <code>komisiyoneri.co.rw</code> hanyuma kanda <strong>Continue</strong></li>
       <li>Firebase izakuha <strong>DNS records 2</strong> (A records cyangwa TXT record)</li>
       <li>Jya kuri domain registrar yawe (GoDaddy, Namecheap, Rwanda...) ushyireho records</li>
       <li>Tegereza amasaha 24-48 — SSL certificate iraboneka Ubuntu</li>
@@ -258,24 +276,57 @@ Hosting URL: https://komisiyoneri-rw.web.app</span></code></pre>
     <div class="warn">⚠️ DNS records zishobora gufata amasaa 24-48 kugira ngo zikorere. Birashoboka!</div>
   </div>
 
-  <!-- STEP 8 — GOOGLE SEARCH CONSOLE -->
+  <!-- STEP 8b — MULTI-SUBDOMAIN SETUP (www / staff / partners) -->
+  <div class="step-card" style="border-color:#F5A623">
+    <div class="step-num" style="background:linear-gradient(135deg,#7A5500,#F5A623)">🌐</div>
+    <div class="step-title" style="color:#7A5500">Kongera Subdomains — www / staff / partners</div>
+    <div class="step-desc">
+      <strong>Icy'ingenzi:</strong> platform ya production ntabwo ikoreshwa kuri Firebase Hosting
+      nk'uko intambwe zo hejuru zibivuga — irakorera kuri <strong>Vercel</strong>
+      (auto-deploy uva kuri GitHub), Firebase ikoreshwa gusa kuri Auth/Firestore/Storage.
+      Niba ushaka kongera subdomains eshatu (<code>www.komisiyoneri.co.rw</code>,
+      <code>staff.komisiyoneri.co.rw</code>, <code>partners.komisiyoneri.co.rw</code>) zose
+      zikaba zerekeza kuri iyo application imwe (code imwe, database imwe), <strong>ntugakurikize
+      intambwe 8 hejuru</strong> (izo ni iza Firebase Hosting gusa) — ahubwo:
+    </div>
+    <ul class="check" style="margin-bottom:1rem">
+      <li><strong>Firebase Console → Authentication → Settings → Authorized domains</strong> —
+        ongeraho izi subdomain eshatu (bisabwa cyane cyane; udabikoze, login izahagarara
+        na error "unauthorized domain" kuri buri subdomain nshya):
+        <code>www.komisiyoneri.co.rw</code>, <code>staff.komisiyoneri.co.rw</code>,
+        <code>partners.komisiyoneri.co.rw</code></li>
+      <li><strong>Vercel Dashboard → project yawe → Settings → Domains</strong> — ongeraho
+        izo subdomain eshatu ZOSE kuri <em>iyi projet imwe iriho ubu</em> (ntukoreshe projet
+        eshatu zitandukanye — code ni imwe, database ni imwe, bityo projet igomba kuba imwe)</li>
+      <li>Emeza aho <code>komisiyoneri.co.rw</code> (apex domain) izajya yerekeza — akenshi
+        biba byiza kuyihuza na <code>www.</code>, ariko iryo ni ihitamo ryawe muri Vercel
+        Dashboard, ntabwo rishobora kugenwa muri code</li>
+    </ul>
+    <div class="tip">✅ Kuko ari code imwe/projet imwe, login (session) ku subdomain imwe
+      ntizigera ku indi subdomain byikora — ibi ni ibisanzwe kandi bikwiye ku mutekano
+      (Firebase Auth persistence isanzwe ari origin-scoped). Firestore Rules na zo
+      ziracyakora kimwe kuri buri subdomain, kuko zitareba domain ahubwo zireba gusa
+      role/uid y'uwinjiye.</div>
+  </div>
+
+  <!-- STEP 9 — GOOGLE SEARCH CONSOLE -->
   <div class="step-card">
-    <div class="step-num">8</div>
+    <div class="step-num">9</div>
     <div class="step-title">Iyandikishe kuri Google Search Console</div>
     <div class="step-desc">Google Search Console niyo ikemura ko Google ibona sitewayisitiwe yawe neza kandi iyandike mu search results.</div>
     <ul class="check" style="margin-bottom:1rem">
       <li>Jya kuri <strong>search.google.com/search-console</strong></li>
-      <li>Kanda <strong>"Add property"</strong> → Shyira <code>https://www.komisiyoneri.com</code></li>
+      <li>Kanda <strong>"Add property"</strong> → Shyira <code>https://komisiyoneri.co.rw</code></li>
       <li>Emeza ownership (Firebase igakorwa vuba cyangwa HTML tag)</li>
-      <li>Kanda <strong>"Sitemaps"</strong> → Shyira <code>https://www.komisiyoneri.com/sitemap.xml</code></li>
+      <li>Kanda <strong>"Sitemaps"</strong> → Shyira <code>https://komisiyoneri.co.rw/sitemap.xml</code></li>
       <li>Tegereza amasaa 24-72 — Google itangira guhuza platform yawe!</li>
     </ul>
     <div class="tip">✅ Nyuma y'ibyumweru 2-4, uzabona KOMISIYONERI mu results za Google Search kuri <strong>"inzu Kigali"</strong>, <strong>"kugura inzu Rwanda"</strong>, na keywords zindi!</div>
   </div>
 
-  <!-- STEP 9 — GA4 -->
+  <!-- STEP 10 — GA4 -->
   <div class="step-card">
-    <div class="step-num">9</div>
+    <div class="step-num">10</div>
     <div class="step-title">Shyira Google Analytics 4 (GA4) — Reba Abasuye</div>
     <div class="step-desc">Jya mu Platform HTML yawe, usimbuze <code>G-XXXXXXXXXX</code> na ID yawe ya GA4:</div>
     <ul class="check" style="margin-bottom:1rem">
@@ -306,6 +357,7 @@ Hosting URL: https://komisiyoneri-rw.web.app</span></code></pre>
 <span class="cmt"># Reba history ya deploys yawe:</span>
 <span class="cmd">firebase hosting:channel:list</span></code></pre>
     <div class="tip">🚀 Firebase ifite <strong>automatic rollback</strong> — niba update nshya yananiwe, ushobora gusubira kuri version ya kera mu masegonda make!</div>
+    <div class="warn">⚠️ <code>--only hosting</code> yohereza <strong>gusa</strong> index.html/CSS/JS. Niba wowe cyangwa AI mwahinduye <code>rules/firestore.rules</code>, <code>rules/storage.rules</code>, <code>firestore.indexes.json</code>, cyangwa ikintu icyo ari cyo cyose muri <code>functions/</code> — ongera usome <strong>Intambwe 7</strong> hejuru maze wohereze na <code>firebase deploy --only firestore:rules,firestore:indexes,storage,functions</code>. Utabikoze, impinduka zisigara gusa muri git, ntizigera ku Firebase y'ukuri (production).</div>
   </div>
 
   <!-- FINAL BOX -->
@@ -314,7 +366,7 @@ Hosting URL: https://komisiyoneri-rw.web.app</span></code></pre>
     <p>Nyuma y'intambwe zose, platform yawe izaboneka kuri izi links:</p>
     <div style="display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap;margin-bottom:1rem">
       <div class="url-pill">🌐 komisiyoneri-rw.web.app</div>
-      <div class="url-pill">🌐 www.komisiyoneri.com</div>
+      <div class="url-pill">🌐 komisiyoneri.co.rw</div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-top:1.5rem;max-width:600px;margin-left:auto;margin-right:auto">
       <div style="background:rgba(255,255,255,.1);border-radius:10px;padding:1rem;text-align:center"><div style="font-size:1.5rem;font-weight:700;font-family:'Cormorant Garamond',serif">HTTPS</div><div style="font-size:.7rem;color:rgba(255,255,255,.6);margin-top:.2rem">SSL Automatic</div></div>
@@ -324,7 +376,7 @@ Hosting URL: https://komisiyoneri-rw.web.app</span></code></pre>
   </div>
 
   <div style="text-align:center;padding:1.5rem 0;font-size:.78rem;color:#6B7A99">
-    © 2025 KOMISIYONERI Connectpro Services Ltd · info@komisiyoneri.com · www.komisiyoneri.com
+    © 2025 KOMISIYONERI Connectpro Services Ltd · info@komisiyoneri.com · komisiyoneri.co.rw
   </div>
 </div>
 </body>

@@ -1,0 +1,1412 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────
+    // NOTE: role checks read the caller's OWN users/{uid} document rather
+    // than a Firebase Auth custom claim (request.auth.token.role). This app
+    // has no Cloud Function that ever calls setCustomUserClaims(), so a
+    // token-claim-based check would be permanently undefined for every user,
+    // including real admins. Roles are assigned by writing users/{uid}.role
+    // (see index.html's _fsPendingApprove()), so that's the source of truth
+    // these rules must check against.
+    function isAuth() {
+      return request.auth != null;
+    }
+    function callerDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+    function getRole() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? callerDoc().data.role
+        : null;
+    }
+    function isRole(r) {
+      return isAuth() && getRole() != null && getRole().lower() == r.lower();
+    }
+    // Unconditional hardcoded bypass — never derived from role_permissions,
+    // so a missing/corrupt/misconfigured permission document can never lock
+    // Admin out, and no configurable role can ever grant itself this tier
+    // (see hasPerm() below, which checks isAdmin() FIRST, before ever
+    // reading role_permissions). Ultimate Authority per governance spec §1/§6.
+    function isAdmin() {
+      return isAuth() && getRole() != null && getRole().lower() in ['admin', 'super_admin'];
+    }
+    // ── Granular permission layer (Dynamic RBAC / Progressive Governance) ──
+    // Sits UNDERNEATH isAdminOrStaff() below — it narrows a small set of
+    // high-risk transitions (property/site/plot approve+status, agent
+    // verify/suspend, commission/payout approval) to whichever roles are
+    // actually configured for them, instead of the blanket staff-tier trust
+    // every OTHER action in this file still uses. Config lives in
+    // role_permissions/{role} (see that collection's own rules below) so a
+    // brand-new role's permission set — or a change to an existing one — is
+    // pure Firestore data, editable from the Admin UI with zero redeploy.
+    // isAdmin() is checked first and short-circuits: Admin's access to every
+    // hasPerm()-gated action NEVER depends on this collection existing or
+    // being correctly populated (absent-staff fallback, governance spec §7).
+    // Deliberately excludes 'users.manage_roles' and 'audit.export' from ever
+    // being resolvable this way — those two stay hardcoded to isAdmin()/
+    // isCEO() at their own call sites, so no role's role_permissions
+    // document, however it's edited, can ever grant Admin-level authority
+    // (governance spec's mandatory safeguard).
+    function hasPerm(p) {
+      return isAdmin()
+        || (isAuth() && getRole() != null
+            && exists(/databases/$(database)/documents/role_permissions/$(getRole().lower()))
+            && p in get(/databases/$(database)/documents/role_permissions/$(getRole().lower())).data.get('permissions', []));
+    }
+    // Caller-authority isActive gate. Defaults to true when the field is
+    // absent (every legacy user doc predating this field keeps working
+    // exactly as before — no forced backfill required). Deliberately NOT
+    // folded into isAdmin() itself: Admin's bypass must stay the one
+    // unconditional guarantee in this file (governance spec §1/§6, "Ultimate
+    // Authority" — see isAdmin()'s own comment) so a corrupted/mistakenly-
+    // false isActive flag on the one remaining Admin account can never
+    // brick the platform's own recovery path the way a bad role_permissions
+    // doc already can't. Every OTHER authority tier below (isAdminOrStaff(),
+    // isInternalTeam(), isCEO(), isDirector()) explicitly ORs isAdmin() first
+    // and only requires this check on the non-admin branch, so Admin's
+    // access through any of them is equally unconditional; suspending any
+    // other role (isActive:false) now actually revokes that role's write
+    // authority, closing a gap where suspension only ever blocked new
+    // logins, never a session/role already resolved through these helpers.
+    function _callerIsActive() {
+      return isAuth() && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && callerDoc().data.get('isActive', true) == true;
+    }
+    function isAdminOrStaff() {
+      // Includes 'ceo': the client UI has always treated ceo as
+      // admin-equivalent in ~20 places (approve/reject actions, HR admin
+      // controls, exec/BI dashboards), but this rule previously didn't —
+      // so a ceo account clicking those buttons got a silent write
+      // rejection. Aligning the two: a CEO shouldn't have less write
+      // capability than regular staff.
+      // 'branch_manager', 'hr_manager', 'operations_manager',
+      // 'marketing_manager', and 'company_owner' are staff-tier roles
+      // (same trust level as 'staff'/'ceo' — no per-branch or
+      // per-department write restriction exists for 'staff' either, so
+      // these introduce no new permission beyond what that tier already
+      // has) — see ROLE_TIERS.STAFF in index.html, which this list must
+      // stay in sync with. 'admin'/'super_admin' are handled via the
+      // unconditional isAdmin() OR below, not this list — see
+      // _callerIsActive()'s own comment.
+      return isAdmin() || (isAuth() && getRole() != null && _callerIsActive() &&
+        getRole().lower() in ['staff', 'ceo', 'branch_manager', 'hr_manager', 'operations_manager', 'operations', 'marketing_manager', 'company_owner', 'director', 'accountant', 'chief_broker', 'customer_support_manager', 'it_manager', 'legal_adviser']);
+    }
+    function isInternalTeam() {
+      return isAdmin() || (isAuth() && getRole() != null && _callerIsActive() &&
+        getRole().lower() in ['agent', 'staff', 'ceo', 'branch_manager', 'hr_manager', 'operations_manager', 'operations', 'marketing_manager', 'company_owner', 'director', 'accountant', 'chief_broker', 'customer_support_manager', 'it_manager', 'legal_adviser']);
+    }
+    // CEO vs Operations Director governance boundary: both are staff-tier
+    // (isAdminOrStaff() above still covers their day-to-day access), but a
+    // narrow set of collections below (strategy, governance, shares, major
+    // contracts, senior-staff actions, loans/asset disposals) are CEO-only
+    // or CEO-write/director-read, and the 'director' role additionally gets
+    // a narrower users/{uid} update grant than the rest of the staff tier
+    // (see that match block below). 'director' is this app's real "Operations
+    // Director" role value — see ROLE_TIERS.STAFF in index.html.
+    function isCEO() {
+      return isRole('ceo') && _callerIsActive();
+    }
+    function isDirector() {
+      return isRole('director') && _callerIsActive();
+    }
+    function isExecutive() {
+      return isCEO() || isDirector();
+    }
+    // Reads the TARGET user's own role (not the caller's) — used only by the
+    // isDirector() carve-out on users/{uid} update, so a director can manage
+    // regular staff/agents but not reassign/edit other senior managers.
+    function isSeniorManager(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && get(/databases/$(database)/documents/users/$(uid)).data.role.lower() in
+           ['ceo', 'company_owner', 'branch_manager', 'hr_manager', 'operations_manager',
+            'operations', 'marketing_manager', 'director', 'accountant', 'chief_broker',
+            'customer_support_manager', 'it_manager', 'legal_adviser'];
+    }
+    // Final Management Org Chart — department is DERIVED from role (this app
+    // has exactly one management role per department; see ROLE_DEPARTMENT in
+    // index.html, which this must stay in sync with), not a second
+    // independently-trusted field. Avoids the drift risk of a stored
+    // department field disagreeing with the role that actually grants trust.
+    function deptOfRole(r) {
+      return r == 'ceo' || r == 'director' ? 'Executive'
+        : r == 'accountant' ? 'Finance'
+        : r == 'chief_broker' ? 'Brokerage'
+        : r == 'marketing_manager' ? 'Marketing'
+        : r == 'customer_support_manager' ? 'CustomerSupport'
+        : r == 'it_manager' ? 'IT'
+        : r == 'hr_manager' ? 'HR'
+        : r == 'legal_adviser' ? 'Legal'
+        : r == 'operations' ? 'Operations'
+        : '';
+    }
+    function inDept(dept) {
+      return isAuth() && getRole() != null && deptOfRole(getRole().lower()) == dept;
+    }
+    function hasStandardFields() {
+      return request.resource.data.keys().hasAll([
+        'id','createdAt','updatedAt','createdBy','updatedBy','status','isActive'
+      ]);
+    }
+    // ── EXISTING collections ──────────────────────────
+
+    match /users/{uid} {
+      // Narrow, additive public-read carve-out: a verified agent's profile
+      // is the whole point of the "Verified Agent Network" directory
+      // feature (index.html's loadAgentsPage()/renderAgentsGrid()) — it's
+      // meant to be publicly browsable, same as properties/partners below.
+      // Before this, ANY read of `users` (get or list) required auth, so an
+      // anonymous visitor's agents-directory query returned permission-
+      // denied and silently fell back to demo agents; only an already
+      // signed-in staff/admin session could see real agent profiles. Scoped
+      // strictly to role=='agent' AND (isVerified||verified)==true — every
+      // other document (clients, unverified agents, staff, admin, or any
+      // doc missing `role`) is completely unaffected and stays exactly as
+      // protected as before.
+      allow read:   if isAuth() && (request.auth.uid == uid || isAdminOrStaff())
+                    || (resource.data.get('role', '').lower() == 'agent'
+                        && (resource.data.get('isVerified', false) == true
+                            || resource.data.get('verified', false) == true));
+      allow create: if isAuth() && request.auth.uid == uid && hasStandardFields();
+      // Narrow, additive carve-out for the "Become an Agent" self-service
+      // application (see index.html's submitAgentReg()) — the only way a
+      // non-admin is allowed to move their own doc's role/status/isActive/
+      // isVerified at all. It only ever lands the caller in the *pending*
+      // state, never the approved one: isVerified must be exactly false and
+      // status exactly 'pending', so an applicant can never self-approve, and
+      // an existing staff/admin/super_admin account can't use it to reset
+      // itself. Only admins (via _fsPendingApprove()) can ever flip
+      // isVerified/status to their approved values. Must be declared inside
+      // this match block (not alongside the top-level helpers above) because
+      // it reads the {uid} path binding, which only exists in this scope.
+      function isSelfAgentApplication() {
+        // The exclusion here used to be a hand-rolled ['admin','super_admin',
+        // 'staff'] list — only 3 of the 15 roles isAdminOrStaff() actually
+        // covers — so a signed-in ceo, branch_manager, director, or any
+        // other staff-tier role NOT in that short list could still write
+        // role:'agent'/status:'pending' onto their own doc through this
+        // self-service path, contradicting this function's own stated intent
+        // (see the comment above: "an existing staff/admin/super_admin
+        // account can't use it to reset itself"). Found during a repo-wide
+        // audit for this exact class of drifted hand-rolled role list
+        // (triggered by an equivalent client-side bug already fixed
+        // elsewhere) and confirmed as a genuine, too-permissive gap — since
+        // request.auth.uid == uid is already required above, resource IS
+        // the caller's own doc here, so isAdminOrStaff() (which reads the
+        // caller's own role) is exactly equivalent to checking this
+        // document's current role, just correctly complete.
+        return isAuth() && request.auth.uid == uid
+          && !isAdminOrStaff()
+          && request.resource.data.role == 'agent'
+          && request.resource.data.status == 'pending'
+          && request.resource.data.isActive == true
+          && request.resource.data.isVerified == false
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['role','status','isActive','isVerified','displayName','phone','email',
+                       'nationalId','address','district','zone','experience','transport',
+                       'languages','agentAppliedAt','updatedAt','updatedBy']);
+      }
+      // A non-admin may only ever touch their own doc, and only the handful
+      // of fields the profile-edit UI actually writes (see saveEditProfile(),
+      // favorites toggle, referral code generation) — never `role`, `status`,
+      // `isActive`, `isVerified`, `budgetApprovalLimit`, or any other field
+      // that every isAdminOrStaff() check in this entire ruleset (and in the
+      // app itself) ultimately derives from. Without this allowlist, any
+      // signed-in user could self-escalate by writing role:'admin' to their
+      // own document — this is also why budgetApprovalLimit (CEO vs
+      // Operations Director governance, see approvals/budgetRequests below)
+      // is admin/CEO-settable only and never appears in this list: a
+      // director can never raise their own approval limit.
+      // isSelfAgentApplication() is the one deliberate, tightly-scoped
+      // exception (see its own comment).
+      //
+      // isDirector() gets a narrower grant than the rest of the staff tier:
+      // every other isAdminOrStaff() role keeps blanket update access to any
+      // user doc, but a director may not edit another senior manager's doc
+      // (isSeniorManager(uid), literal role-list check on the TARGET doc) —
+      // they can still edit their own doc and any regular staff/agent/client
+      // doc. This is a deliberate, scoped exception to the otherwise-uniform
+      // staff-tier trust model documented in
+      // tests/rules/test/03-staff-tier-uniform-trust.spec.js.
+      // `role` itself is Admin/CEO-only — users.manage_roles is deliberately
+      // never resolvable from role_permissions (see hasPerm()'s own
+      // comment), so this is the one and only place role reassignment is
+      // authorized, hardcoded, immune to any config/permission drift. This
+      // was previously reachable by ANY isAdminOrStaff() role via the
+      // blanket grant below (no field allowlist on that branch) — closing a
+      // pure server-side privilege-escalation gap, not a working workflow:
+      // the only client UI that ever calls changeUserRole() is the HR org
+      // chart panel, itself already gated to isAdmin(currentUser) in
+      // index.html's loadHR(), so no legitimate non-admin path is affected.
+      function _isRoleFieldChange() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
+      }
+      // CRITICAL, found during the pre-production governance audit: an
+      // earlier version of this rule let isCEO() authorize ANY role-field
+      // value, including 'admin'/'super_admin' — meaning a CEO could
+      // promote any account (including their own) straight to Admin,
+      // bypassing Ultimate Authority being an Admin-only tier entirely and
+      // making role_permissions' own Admin-only write gate moot (why edit
+      // permissions when you can just become Admin?). CEO retains org-chart
+      // authority to assign every OTHER role (director, accountant,
+      // operations, etc. — createStaffOrPartnerAccount's own
+      // PROVISIONABLE_STAFF_ROLES already never included admin/super_admin
+      // for NEW accounts; this closes the matching gap for reassigning an
+      // EXISTING account's role) — only escalation INTO admin/super_admin
+      // is Admin-only, hardcoded, no exception.
+      function _isEscalationToAdminRole() {
+        return request.resource.data.get('role', '').lower() in ['admin', 'super_admin'];
+      }
+      // Agent verification/suspension — the flip of isVerified/verified or
+      // status on an agent's own doc (_fsPendingApprove()/_fsPendingReject()
+      // and any future suspend action) — is scoped to whichever roles are
+      // actually configured with agents.verify/agents.suspend, instead of
+      // every one of the 14+ staff-tier roles today. Every OTHER user-doc
+      // edit an admin/staff account makes (org-chart fields, status changes
+      // on non-agent accounts, HR fields, etc.) is completely unaffected.
+      function _isAgentVerifySuspendChange() {
+        return resource.data.get('role', '').lower() == 'agent'
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(['isVerified', 'verified', 'status']);
+      }
+      function _agentGovernanceOK() {
+        return (!_isRoleFieldChange() || isAdmin() || (isCEO() && !_isEscalationToAdminRole()))
+          && (!_isAgentVerifySuspendChange() || hasPerm('agents.verify') || hasPerm('agents.suspend'));
+      }
+      // Factored out so _agentGovernanceOK() (which internally short-circuits
+      // to isAdmin()/hasPerm() calls, each a get()) is evaluated exactly
+      // ONCE per request rather than once per branch below — evaluating it
+      // twice (once in the isAdminOrStaff() branch, once in the isDirector()
+      // branch, as an earlier version of this rule did) pushed this rule
+      // over Firestore's ~1000-expression-per-request evaluation ceiling and
+      // made every users/{uid} update fail with "Unable to evaluate the
+      // expression as the maximum...has been reached" instead of a normal
+      // allow/deny. Caught by tests/rules' own suite, not discovered live.
+      function _isStaffTierEditableUser(uid) {
+        return (isAdminOrStaff() && !isDirector())
+          || (isDirector() && (request.auth.uid == uid || !isSeniorManager(uid)));
+      }
+      allow update: if (_isStaffTierEditableUser(uid) && _agentGovernanceOK())
+                    || isSelfAgentApplication()
+                    || (isAuth() && request.auth.uid == uid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['phone','location','preference','photoURL','themePref',
+                                     'referralCode','favorites','language','updatedAt','updatedBy']));
+      allow delete: if false;
+    }
+
+    // Public homepage stats aggregate (see functions/index.js's
+    // updateHomepageStats) — 3 counts, no PII, recomputed on a timer by a
+    // Cloud Function using the Admin SDK (which bypasses these rules
+    // entirely, so `write: if false` here is correct: no client, including
+    // an admin, is meant to write this directly). Public read lets
+    // index.html's loadLiveHomeStats() show real listing/client/agent
+    // counts to anonymous visitors without needing read access to the
+    // underlying (correctly locked-down) `users` collection.
+    match /stats/{doc} {
+      allow read:  if true;
+      allow write: if false;
+    }
+
+    match /properties/{id} {
+      allow read:   if true;
+      // P0-1 governance closure: create-time was only checking that the
+      // standard-field KEYS existed (hasStandardFields()), never that
+      // `status`/`availability` held a legitimate INITIAL value — so any
+      // authenticated user, agent included, could create a brand-new
+      // property already status:'approved' or availability:'sold',
+      // completely bypassing properties.approve and every other review
+      // gate below. A normal create must land in 'pending' (matches
+      // submitProperty()'s non-admin path); the one authorized fast-path
+      // this preserves is the existing admin/staff one-step create used by
+      // _isPropAdmin() accounts (submitProperty() writes status:'approved'
+      // directly for them today) — narrowed to whoever actually holds
+      // properties.approve, the same permission already gating this exact
+      // status value via update, so this grants no new privilege. Rejected/
+      // sold/reserved/etc. can never be a create-time value for anyone.
+      // availability is separately pinned to 'available' (or left absent)
+      // — _savePropToFirestoreFS() hardcodes 'available' for every new
+      // listing; no legitimate flow ever creates a property already sold.
+      function _isPropertyCreateStatusOK() {
+        return request.resource.data.get('status', '').lower() == 'pending'
+          || (request.resource.data.get('status', '').lower() == 'approved'
+              && hasPerm('properties.approve'));
+      }
+      function _isPropertyCreateAvailabilityOK() {
+        return !('availability' in request.resource.data)
+          || request.resource.data.get('availability', '').lower() == 'available';
+      }
+      allow create: if isAuth() && hasStandardFields()
+                    && _isPropertyCreateStatusOK() && _isPropertyCreateAvailabilityOK();
+      // Editing an already-Approved listing's own content is CEO-only —
+      // index.html's openEditProperty() only exposes this via a
+      // CEO-visible "Edit" button in the admin panel, but the client UI
+      // was never the real boundary: before this, isAdminOrStaff() (every
+      // staff-tier role, not just CEO) could already write any field to
+      // any property regardless of status via a direct Firestore call,
+      // Approved included. _isApprovedContentEditByNonCEO() closes that
+      // gap without touching what admin/staff can still do to an Approved
+      // listing — approve/reject, isActive toggle, approvedBy/approvedAt,
+      // featured, investmentDetails.totalRaised, etc. all stay available
+      // to the full isAdminOrStaff() tier exactly as before; only a write
+      // that touches this listing's actual content fields while it's
+      // Approved is now restricted to isCEO(). Status is stored
+      // inconsistently cased across this app ('Approved' vs 'approved' —
+      // see loadHomepageRotation()'s own comment on the same issue), so
+      // this compares lower().
+      function _isApprovedContentEditByNonCEO() {
+        return resource.data.get('status', '').lower() == 'approved'
+          && !isCEO()
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(['type','category','district','sector','price','bedrooms',
+                      'bathrooms','area','description','title','amenities','images']);
+      }
+      // The owning agent/owner may edit their own listing's content, but
+      // never the fields that represent the admin-review decision itself
+      // (status, approvedBy, approvedAt, isVerified) or reassign ownership
+      // (agentId, ownerId) — matches what the self-edit UI actually sends
+      // (see the edit-mode branch of submitProperty()) and closes off a
+      // client-side bypass of the "every listing is admin-reviewed" guarantee.
+      // This branch already only ever fires while status is Pending (the
+      // client never lets an owner/agent reach this for an Approved
+      // listing), so it needs no separate CEO carve-out of its own.
+      // Approve/reject is the actual admin-review decision this whole
+      // collection exists to gate — narrowed from blanket isAdminOrStaff()
+      // to whichever roles are configured with properties.approve/reject
+      // (governance spec §9/§14: "do not assume every Staff member needs
+      // the same status permissions"). Every other write an admin/staff
+      // account makes to a property (isActive toggle, featured, images,
+      // investmentDetails, etc.) is untouched — this only fires when the
+      // write actually moves `status` into 'approved' or 'rejected'.
+      function _isPropertyApproveRejectChange() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          && request.resource.data.get('status', '').lower() in ['approved', 'rejected'];
+      }
+      // Availability (Available/Reserved/Sold) is a genuinely separate
+      // concept from the approval `status` field above — see the property/
+      // status audit this governs. Gated the same way: narrowed from
+      // blanket isAdminOrStaff() to properties.change_status, independent
+      // of properties.approve/reject (a role can have one without the
+      // other — e.g. chief_broker has neither, matching "Chief Broker =
+      // brokerage/agent authority, not operational status authority").
+      function _isPropertyAvailabilityChange() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasAny(['availability']);
+      }
+      // Governance hardening P2.9: a transition INTO 'sold' must carry a
+      // non-empty availabilityReason. The UI (_fsAdminSetAvailability())
+      // already prompts for this on 'sold' but previously accepted an empty
+      // string; enforced here too so a direct Firestore write can't skip it.
+      // Extended (Property Status Governance Hardening) to ALSO require a
+      // reason when REVERSING out of 'sold' — undoing a finalized sale is
+      // exactly as consequential as making one.
+      //
+      // Requires availabilityReason to be part of THIS write's own diff, not
+      // just non-empty in the merged result — an .update() that omits the
+      // field leaves whatever reason string is already stored on the
+      // document untouched, so a plain size()>0 check on the post-merge
+      // value could be satisfied by a STALE reason left over from a
+      // completely different, earlier transition (e.g. the original sale's
+      // reason still sitting there when someone later reverses it without
+      // supplying a new one of their own). Caught by this hardening pass's
+      // own adversarial tests (#13/#15 in
+      // 10-property-status-governance-hardening.spec.js) using a seeded
+      // "already sold" fixture that — realistically — already has a reason
+      // string from when it was sold; the original per-entry-only version
+      // of this check only ever passed against a fixture with no prior
+      // availabilityReason at all, which is why the gap was never exercised
+      // before.
+      function _isPropertySoldReasonOK() {
+        return !(request.resource.data.get('availability', '').lower() == 'sold'
+                  || resource.data.get('availability', '').lower() == 'sold')
+          || (request.resource.data.diff(resource.data).affectedKeys().hasAny(['availabilityReason'])
+              && request.resource.data.get('availabilityReason', '').size() > 0);
+      }
+      // Property Status Governance Hardening: undoing an already-finalized
+      // 'sold' state back to available/reserved is a HIGH-RISK REVERSAL,
+      // deliberately governed separately from the FORWARD transitions in
+      // _isPropertyAvailabilityChange() (available->reserved, available->
+      // sold), which stay ordinary properties.change_status actions per the
+      // approved governance matrix. A role holding everyday
+      // properties.change_status authority (e.g. director, operations) must
+      // NOT automatically gain the power to unwind a completed sale —
+      // narrowed to the separate properties.reverse_sold permission, which
+      // is never granted by default to any role (must be explicitly added
+      // via the Admin role-permissions panel). This mirrors plots.mark_sold's
+      // direction-aware _plotStatusOK() above, but is intentionally NOT the
+      // same permission name or the same trigger condition: plots.mark_sold
+      // also gates the forward transition into 'sold' (see that function's
+      // own comment), while here the forward available->sold transition
+      // stays a normal change_status action — only the reversal is elevated
+      // — matching this collection's own explicitly-specified governance
+      // matrix (available->sold is listed under normal AVAILABILITY, not
+      // under HIGH-RISK REVERSALS).
+      function _isPropertyHighRiskReversal() {
+        return resource.data.get('availability', '').lower() == 'sold'
+          && request.resource.data.get('availability', '').lower() in ['available', 'reserved'];
+      }
+      function _propertyGovernanceOK() {
+        return (!_isPropertyApproveRejectChange()
+          || (request.resource.data.get('status', '').lower() == 'approved' && hasPerm('properties.approve'))
+          || (request.resource.data.get('status', '').lower() == 'rejected' && hasPerm('properties.reject')))
+          && (!_isPropertyAvailabilityChange()
+              || (_isPropertyHighRiskReversal() ? hasPerm('properties.reverse_sold') : hasPerm('properties.change_status')))
+          && _isPropertySoldReasonOK();
+      }
+      allow update: if (isAdminOrStaff() && !_isApprovedContentEditByNonCEO() && _propertyGovernanceOK())
+                    || ((resource.data.agentId == request.auth.uid || resource.data.ownerId == request.auth.uid)
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['type','category','district','sector','price','bedrooms',
+                                     'bathrooms','area','description','title','amenities',
+                                     'images','updatedAt','updatedBy']));
+      allow delete: if false;
+    }
+
+    match /leads/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && (resource.data.clientId == request.auth.uid
+                        || resource.data.agentId  == request.auth.uid));
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.agentId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /deals/{id} {
+      // P0.1 security closure (adversarial re-audit found this the same
+      // day #70 merged): the old create/update rules let ANY authenticated
+      // user fabricate a deal naming themselves as its own agentId with an
+      // arbitrary agreedPrice, then self-transition it to closed_won —
+      // laundering an arbitrary amount into a REAL, Admin-SDK-written
+      // commission + invoice via the legitimate onDealClosedWon cascade
+      // (that trigger bypasses rules entirely, so it can't be the backstop).
+      //
+      // Fix has two parts:
+      // 1. create requires the caller be an actual party to the deal (its
+      //    own agentId or its own clientId) unless they're admin/staff —
+      //    covers both convertLeadToDeal()'s agent-initiated creation and
+      //    submitOffer()'s buyer-initiated creation (where the agent is a
+      //    real third party, not the creator) — and a deal can never be
+      //    born already closed_won.
+      // 2. update to closed_won — the money-triggering transition — now
+      //    requires admin/staff, full stop. A non-staff agent keeps full
+      //    update rights on every other stage/field of their own deal, but
+      //    can neither reassign agentId away from themselves nor
+      //    self-approve the one transition that generates real money.
+      //    onDealClosedWon (functions/index.js) independently re-verifies
+      //    the actor was genuinely staff as a second, server-side layer.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && (resource.data.clientId == request.auth.uid
+                        || resource.data.agentId  == request.auth.uid));
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.pipelineStage != 'closed_won'
+                    && (isAdminOrStaff()
+                        || request.resource.data.agentId == request.auth.uid
+                        || request.resource.data.clientId == request.auth.uid);
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.agentId == request.auth.uid
+                        && request.resource.data.agentId == request.auth.uid
+                        && request.resource.data.pipelineStage != 'closed_won');
+      allow delete: if false;
+    }
+
+    match /commissions/{id} {
+      // P0 remediation (Enterprise Readiness Audit): the old `isAuth() &&
+      // hasStandardFields()` create rule let ANY authenticated user forge a
+      // commission with status:'approved' and an arbitrary agentShare —
+      // skipping the approval workflow entirely. Real client creation
+      // paths (convertLeadToDeal(), calculatePlotCommission(),
+      // createManualCommission() in index.html) all legitimately need to
+      // create a commission client-side and must keep working, so create
+      // isn't locked to admin/staff — instead it's pinned to status ==
+      // 'pending', which has zero monetary effect on its own. The only
+      // rule that can ever move a commission to 'approved' or 'paid' is
+      // `update`, already admin/staff-only below, so this closes the
+      // forge-an-approved-commission path without breaking any existing
+      // workflow. The Cloud Function that creates real deal commissions
+      // (onDealClosedWon) writes via the Admin SDK, which bypasses rules
+      // entirely, so it needs no allowance here either.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.agentId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.status == 'pending';
+      // Approve/pay is the money-moving transition — narrowed to
+      // commissions.manage (ceo/accountant/admin in the default matrix)
+      // instead of every staff-tier role. A staff-tier account without that
+      // permission keeps its existing read access (unaffected above) but
+      // can no longer move a commission out of 'pending' itself.
+      allow update: if isAdminOrStaff() && hasPerm('commissions.manage');
+      allow delete: if false;
+    }
+
+    match /subscriptions/{id} {
+      // Doc id is always the agent's own uid (see subscribeToPremium() /
+      // dailySubscriptionSync in functions/index.js), so `id ==
+      // request.auth.uid` and the agentId field check are redundant with
+      // each other on purpose — cheap defense in depth, not load-bearing
+      // on its own. Unlike payout_requests, this doesn't restrict WHICH
+      // fields an agent can change on their own doc (e.g. to a narrow
+      // status transition): a subscription is entirely self-managed
+      // bookkeeping with no payment gateway behind it, so the worst case
+      // of an agent tampering with their own currentPeriodEnd is "they
+      // keep believing they're subscribed a bit longer," not a real
+      // financial loss — nothing here moves money. The Cloud Function
+      // that actually bills renewals writes via the Admin SDK, which
+      // bypasses these rules entirely, so it needs no allowance here.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.agentId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.agentId == request.auth.uid
+                    && id == request.auth.uid;
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && id == request.auth.uid
+                        && request.resource.data.agentId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /payout_requests/{id} {
+      // A payout request is a snapshot of specific commission doc IDs +
+      // their summed agentShare at request time (see submitPayoutRequest()
+      // in index.html). Approving one no longer batch-updates commissions
+      // directly from the client — see P0.1 note below.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.agentId == request.auth.uid);
+      // Tightened beyond the `leaves` collection's equivalent create rule
+      // (which doesn't check the self-ownership field): this collection
+      // moves money, so a client can only ever create a payout request
+      // for themselves, not on another agent's behalf. Also pinned to
+      // status == 'pending' so a request can never be self-created
+      // already 'approved'.
+      //
+      // P0.1 security closure: the adversarial re-audit of #70 found that
+      // serverVerified/verifiedAmount/verifiedAt — the fields the whole
+      // approval gate depends on — were writable by the client, since the
+      // create rule never constrained them. A client could set
+      // serverVerified:true on their own forged request, and
+      // approvePayoutRequest() only ever checked that flag, never status.
+      // Now: creation must set all three to their explicit unverified
+      // defaults, and no update path (admin included) may ever change
+      // them — only the onPayoutRequestCreated Cloud Function (Admin SDK,
+      // bypasses these rules) can ever set serverVerified:true.
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.agentId == request.auth.uid
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.serverVerified == false
+                    && request.resource.data.verifiedAmount == 0
+                    && request.resource.data.verifiedAt == null;
+      // The requesting agent may only cancel their own still-pending
+      // request (not approve it, not change the amount) — a plain
+      // document update, so unlike list reads this can safely inspect
+      // resource.data.status directly. Admin/staff may reject freely, but
+      // may only transition INTO 'approved' from a genuinely 'pending' +
+      // already-server-verified request — never a request the trigger
+      // hasn't cleared yet, structurally closing the exact forgery this
+      // section's comment above describes. The actual commission-paid
+      // batch write happens in onPayoutRequestApproved (functions/
+      // index.js), which independently re-verifies everything a second
+      // time before moving anything, since server-verified state can go
+      // stale between verification and approval (e.g. a commission paid
+      // out via a different, concurrent request).
+      // Approving a payout (the actual money-moving transition) additionally
+      // requires commissions.manage — rejecting stays open to the full
+      // isAdminOrStaff() tier as before (not a financial action on its own).
+      allow update: if (request.resource.data.serverVerified == resource.data.serverVerified
+                        && request.resource.data.verifiedAmount == resource.data.verifiedAmount
+                        && request.resource.data.verifiedAt == resource.data.verifiedAt)
+                    && ((isAdminOrStaff()
+                         && (request.resource.data.status != 'approved'
+                             || (resource.data.status == 'pending' && resource.data.serverVerified == true
+                                 && hasPerm('commissions.manage'))))
+                        || (isAuth() && resource.data.agentId == request.auth.uid
+                            && resource.data.status == 'pending'
+                            && request.resource.data.status == 'cancelled'));
+      allow delete: if false;
+    }
+
+    match /documents/{id} {
+      // accessRoles (checked at upload, e.g. by submitDocumentUpload() in
+      // index.html) lets staff file a document under a client's clientId
+      // without it being visible in that client's own portal — a client
+      // may only read/update their own document if 'client' is one of the
+      // marked accessRoles, and likewise an agent only via 'agent'. Docs
+      // with no accessRoles field at all default to visible, matching
+      // this rule's own pre-accessRoles behavior.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.clientId == request.auth.uid
+                        && 'client' in resource.data.get('accessRoles', ['client']))
+                    || (isAuth() && resource.data.agentId  == request.auth.uid
+                        && 'agent' in resource.data.get('accessRoles', ['agent']));
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.clientId == request.auth.uid
+                        && 'client' in resource.data.get('accessRoles', ['client']))
+                    || (isAuth() && resource.data.agentId  == request.auth.uid
+                        && 'agent' in resource.data.get('accessRoles', ['agent']));
+      allow delete: if false;
+    }
+
+    match /offers/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && (resource.data.fromUserId == request.auth.uid
+                        || resource.data.toUserId == request.auth.uid));
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && (resource.data.fromUserId == request.auth.uid
+                        || resource.data.toUserId == request.auth.uid));
+      allow delete: if false;
+    }
+
+    match /viewings/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && (resource.data.clientId == request.auth.uid
+                        || resource.data.agentId  == request.auth.uid));
+      allow create: if isAuth() && hasStandardFields()
+                    && (request.resource.data.clientId == request.auth.uid
+                        || request.resource.data.agentId == request.auth.uid
+                        || isAdminOrStaff());
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && (resource.data.clientId == request.auth.uid
+                        || resource.data.agentId  == request.auth.uid));
+      allow delete: if false;
+    }
+
+    match /services/{id} {
+      // assignedToId is the assigned partner's real account uid (see
+      // index.html's assignServicePartner()) — assignedTo is a display
+      // name string only, never an auth uid, so it must not be used here.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && (resource.data.requestedBy == request.auth.uid
+                        || resource.data.assignedToId == request.auth.uid));
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.assignedToId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /partners/{id} {
+      allow read:   if true;
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.userId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /invoices/{id} {
+      // P0 remediation: same shape of gap as commissions above — any
+      // authenticated user could previously create an invoice already
+      // marked 'paid' or 'refunded', polluting revenue records. Every
+      // legitimate client creation path (manual Accounting invoices via
+      // submitInvoice(), referral/partner payout invoices) only ever
+      // writes 'draft' or 'sent'; 'paid'/'refunded' only ever happen via
+      // the admin/staff-only `update` rule below. Cloud Functions
+      // (deal-close and subscription-renewal invoices) use the Admin SDK
+      // and bypass rules entirely.
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.billedTo == request.auth.uid)
+                    || (isAuth() && resource.data.clientId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.status in ['draft', 'sent'];
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /expenses/{id} {
+      allow read:   if isAdminOrStaff();
+      allow create: if isAdminOrStaff() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /tasks/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.assignedTo == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.assignedTo == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /attendance/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.userId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.userId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    match /leaves/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.userId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /payroll/{id} {
+      // Final Management Org Chart: HR Manager's deniedActions includes
+      // "change_salaries_unapproved" — HR may still read payroll like every
+      // other staff-tier role, but can no longer write it directly; a salary
+      // change must go through /approvals instead (see index.html's salary-
+      // change flow). This is a deliberate, scoped exception to the
+      // otherwise-uniform staff-tier trust model documented in
+      // tests/rules/test/03-staff-tier-uniform-trust.spec.js (payroll is no
+      // longer part of that uniform set — expenses/assets still are).
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.userId == request.auth.uid);
+      allow create: if isAdminOrStaff() && !inDept('HR') && hasStandardFields();
+      allow update: if isAdminOrStaff() && !inDept('HR');
+      allow delete: if false;
+    }
+
+    match /reviews/{id} {
+      // Fully public — this collection is exclusively partner ratings now
+      // (staff performance reviews live in staff_reviews, see below). No
+      // field-dependent branching here on purpose: Firestore cannot prove
+      // a list/query read is safe when a rule branches on a field that
+      // isn't part of the query filter, which is exactly what previously
+      // let an unrelated user list another employee's private reviews
+      // (verified against the rules-enabled emulator) when this collection
+      // still held both kinds of data. Fixed by migrating the old staff
+      // review docs out (scripts/migrate-staff-reviews.js — MUST run
+      // before deploying this rule) rather than trying to keep any
+      // conditional branching here.
+      allow read:   if true;
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.get('subjectType', 'partner') != 'staff';
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /staff_reviews/{id} {
+      // Kept as its own collection rather than reusing `reviews` (which
+      // mixes in publicly-readable partner ratings): a rule that branches
+      // on a field not present in every document of a collection cannot be
+      // proven safe by Firestore for list/query reads, and empirically
+      // (verified against the rules-enabled emulator) that ambiguity lets
+      // an unrelated authenticated user list another employee's private
+      // reviews. staffId is always present here and always matches the
+      // query filter loadStaffReviewHistory() actually issues, so this
+      // stays simple and provably safe for both get and list.
+      allow read:   if isAdminOrStaff() || (isAuth() && resource.data.staffId == request.auth.uid);
+      allow create: if isAdminOrStaff() && hasStandardFields();
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    match /assets/{id} {
+      // Internal equipment registry — admin/staff only, no public or
+      // self-service read (unlike staff_reviews, no employee-facing "my
+      // assets" view exists yet, so there's no need for the staffId-style
+      // list-safe carve-out).
+      allow read:   if isAdminOrStaff();
+      allow create: if isAdminOrStaff() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /branches/{id} {
+      allow read:   if isAuth();
+      allow create: if isAdminOrStaff() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /departments/{id} {
+      allow read:   if isAuth();
+      allow create: if isAdminOrStaff() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /job_postings/{id} {
+      // Public read — the Careers page lists open postings to signed-out
+      // visitors, same as property listings.
+      allow read:   if true;
+      allow create: if isAdminOrStaff() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /job_applications/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.applicantId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    match /referrals/{id} {
+      allow read:   if isAuth() && (resource.data.referrerId == request.auth.uid || isAdminOrStaff());
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff();
+      allow delete: if false;
+    }
+
+    // ── INVESTOR PORTAL ────────────────────────────────
+    match /investments/{id} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.investorId == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.investorId == request.auth.uid;
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.investorId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['status','updatedAt','updatedBy']));
+      allow delete: if false;
+    }
+
+    match /notifications/{id} {
+      allow read:   if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAuth() && resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /messages/{id} {
+      // Two shapes share this collection: 1:1 client<->agent messages
+      // (participants array) and internal team-channel posts (channel
+      // field, no participants) — added for the Office Management team
+      // channel feature rather than creating a duplicate collection.
+      allow read:   if isAuth() && (
+                      isAdminOrStaff()
+                      || ('participants' in resource.data && request.auth.uid in resource.data.participants)
+                      || ('channel' in resource.data && isInternalTeam())
+                    );
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.fromId == request.auth.uid
+                    && (
+                      ('participants' in request.resource.data && request.auth.uid in request.resource.data.participants)
+                      || ('channel' in request.resource.data && isInternalTeam())
+                    );
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.toId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['read','updatedAt','updatedBy']));
+      allow delete: if false;
+    }
+
+    // ── Dynamic RBAC / Progressive Governance permission config ─────────
+    // One doc per role, id == lowercased role value (e.g.
+    // role_permissions/operations), shape: { role, permissions: [...],
+    // createdAt, updatedAt, createdBy, updatedBy }. Read by hasPerm() above
+    // via get(). Writable ONLY by isAdmin() — "Role permissions must be
+    // managed only through the authorized Admin UI" — not even isCEO()/
+    // isAdminOrStaff(), so a staff-tier account (even one with e.g.
+    // users.view) can never edit its own or another role's permission set.
+    // The permissions-array check below blocks the two Admin-level
+    // capabilities (users.manage_roles, audit.export) from ever being
+    // written into ANY role's permissions array, even by Admin — those stay
+    // exclusively hardcoded at their own call sites (see isAdmin()'s own
+    // comment above), so this collection can never be used, accidentally or
+    // otherwise, to hand out Admin-equivalent authority to a configurable role.
+    match /role_permissions/{role} {
+      allow read:   if isAdminOrStaff();
+      allow create, update: if isAdmin()
+                    && request.resource.data.role == role
+                    && !request.resource.data.get('permissions', []).hasAny(
+                         ['users.manage_roles', 'audit.export', 'admin.bypass']);
+      allow delete: if isAdmin();
+    }
+
+    match /auditlogs/{id} {
+      // Immutable — no updates or deletes ever
+      allow read:   if isAdminOrStaff();
+      // CRITICAL fix (final security audit, finding F-1): this used to be
+      // `isAuth() && hasStandardFields()` with NO constraint at all on
+      // performedBy/createdBy/updatedBy (or action/userRole/oldValue/
+      // newValue) — any authenticated user, including a plain 'client',
+      // could create a permanent, immutable audit entry claiming a
+      // DIFFERENT uid performed an arbitrary action, since auditlogs allows
+      // create but never update/delete. index.html's one and only
+      // audit-log write path (logAudit(), the sole `.add()` call site) has
+      // always set performedBy/createdBy/updatedBy to the caller's own real
+      // currentUser.uid — never a parameter, never another identity — so
+      // this pins that already-true invariant into the rule itself, closing
+      // the direct-Firestore-write forgery path without touching any
+      // legitimate caller. Deliberately narrow: this is an IDENTITY-
+      // attribution fix only (a user can no longer name someone ELSE as the
+      // actor). It does not constrain action/userRole/collection/docId/
+      // oldValue/newValue — a self-attributed entry can still misrepresent
+      // what happened, and userRole can still drift from the caller's real
+      // stored role, which is a separate, disclosed finding (F-3-adjacent),
+      // not fixed here.
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.performedBy == request.auth.uid
+                    && request.resource.data.createdBy == request.auth.uid
+                    && request.resource.data.updatedBy == request.auth.uid;
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // ── SITE DEVELOPMENT MODULE ───────────────────────
+
+    match /sites/{siteId} {
+      allow read:   if true;
+      // P0-1 governance closure (same class of bug as properties above):
+      // create-time placed no constraint on `status` at all, so any agent/
+      // developer could create a new site already status:'active',
+      // bypassing sites.approve entirely. A normal create must land in
+      // 'pending_review' (submitSiteForm()'s non-auto-approve path); the
+      // one authorized fast-path preserved is the existing admin/staff
+      // one-step create (submitSiteForm() writes status:'active' directly
+      // when isAdminOrStaff(currentUser) is true today) — narrowed to
+      // whoever actually holds sites.approve, the same permission already
+      // gating this exact value via update, so this grants no new
+      // privilege. 'rejected' (sites never legitimately use this value —
+      // see _isSiteApproveChange()'s own comment) can never be a create-
+      // time value for anyone.
+      function _isSiteCreateStatusOK() {
+        return request.resource.data.get('status', '').lower() == 'pending_review'
+          || (request.resource.data.get('status', '').lower() == 'active'
+              && hasPerm('sites.approve'));
+      }
+      allow create: if isAuth()
+                    && (isRole('agent') || isRole('developer') || isAdminOrStaff())
+                    && hasStandardFields() && _isSiteCreateStatusOK();
+      // Same shape as properties' _isPropertyApproveRejectChange() above —
+      // narrows the admin-review status transition on the isAdminOrStaff()
+      // branch to sites.approve. CRITICAL fix (found by this hardening
+      // pass's own adversarial tests): this used to compare against
+      // 'approved', but sites never actually use that value — approveSite()
+      // (index.html) writes status:'active' for the approved state ('approved'
+      // is properties' own value, not sites'). That mismatch meant this
+      // function was permanently false in real use, so sites.approve never
+      // actually gated anything — any isAdminOrStaff() account could approve
+      // any site regardless of role_permissions.
+      function _isSiteApproveChange() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          && request.resource.data.get('status', '').lower() == 'active';
+      }
+      function _siteGovernanceOK() {
+        return !_isSiteApproveChange() || hasPerm('sites.approve');
+      }
+      // Field allowlist for the managingAgentId/developerId ownership
+      // branches below — CRITICAL fix (audit finding F-2). Those branches
+      // used to allow a completely unrestricted update once the caller
+      // matched the site's own managingAgentId/developerId, letting the
+      // owning agent/developer silently self-approve their own site
+      // (status:'approved'), rewrite approvedBy/approvedAt/rejectionReason,
+      // reassign managingAgentId/developerId to hijack the site, or
+      // falsify the totalPlots/availablePlots/reservedPlots/soldPlots/
+      // totalValueRWF inventory counters that are only ever meant to be
+      // maintained transactionally by the plot-status-change code path.
+      // This allowlist is exactly submitSiteEditForm()'s own `editData`
+      // field set (index.html) — the one legitimate "owner edits their own
+      // site" UI this app has — plus updatedAt/updatedBy, so no existing
+      // feature loses capability. commissionRate is deliberately EXCLUDED
+      // even though the edit form also sends it: it feeds
+      // calculatePlotCommission()'s payout formula directly, so letting the
+      // owning agent silently raise their own commission rate is the same
+      // class of self-dealing risk this pass closes on plots' price field
+      // below — a rate change now has to go through isAdminOrStaff().
+      function _isSiteOwnerContentEditOK() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name','nameRW','description','descriptionRW','district','sector','cell','village',
+          'coordinates','ownerName','ownerPhone','ownerType','lotissementRef','titleDeedRef',
+          'roadType','amenities','pricePerSqmMin','pricePerSqmMax','siteMapUrl',
+          'updatedAt','updatedBy'
+        ]);
+      }
+      allow update: if (isAdminOrStaff() && _siteGovernanceOK())
+                    || (isAuth() && isRole('agent') && _callerIsActive()
+                        && resource.data.managingAgentId == request.auth.uid
+                        && _isSiteOwnerContentEditOK())
+                    || (isAuth() && isRole('developer') && _callerIsActive()
+                        && resource.data.developerId == request.auth.uid
+                        && _isSiteOwnerContentEditOK());
+      allow delete: if false;
+    }
+
+    match /plots/{plotId} {
+      allow read:   if true;
+      // P0-1 governance closure: unlike properties/sites, plots have no
+      // legitimate authorized fast-path at all — every real plot-creation
+      // call site (submitSiteForm()'s create AND append-to-existing-site
+      // branches, index.html) hardcodes status:'available' unconditionally,
+      // for agent/developer/staff creators alike. So this is a strict,
+      // exception-free requirement: create must always be 'available',
+      // never 'sold'/'reserved'/'on_hold'/'unavailable', regardless of role.
+      function _isPlotCreateStatusOK() {
+        return request.resource.data.get('status', '').lower() == 'available';
+      }
+      allow create: if isAuth()
+                    && (isRole('agent') || isAdminOrStaff())
+                    && hasStandardFields() && _isPlotCreateStatusOK();
+      // 'sold' is the one plot transition that finalizes a sale (triggers
+      // calculatePlotCommission() client-side) — narrowed to
+      // plots.mark_sold; every other status value (reserved/available/
+      // on_hold) needs only plots.change_status. Direction-aware
+      // (governance hardening P2.7): REVERSING a plot back out of 'sold'
+      // needs plots.mark_sold too, not just plots.change_status — undoing a
+      // finalized sale is exactly as sensitive as making one, and without
+      // this a change_status-only role could quietly unwind a completed
+      // sale (and whatever commission was already generated for it).
+      function _plotStatusOK() {
+        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          || ((request.resource.data.get('status', '').lower() == 'sold'
+               || resource.data.get('status', '').lower() == 'sold')
+              && hasPerm('plots.mark_sold'))
+          || (request.resource.data.get('status', '').lower() != 'sold'
+              && resource.data.get('status', '').lower() != 'sold'
+              && hasPerm('plots.change_status'));
+      }
+      // transactionSource (CRITICAL fix, audit finding — previously had NO
+      // rule constraint at all) records whether KOMISIYONERI brokered a
+      // sale/removal or it happened externally, and directly gates whether
+      // calculatePlotCommission() runs (index.html's openPlotStatusChange())
+      // — so the ability to set it is exactly as sensitive as marking a
+      // plot sold. Reuses plots.mark_sold rather than a new permission: the
+      // client only ever prompts for it alongside a transition into
+      // sold/unavailable anyway (see VALID_TRANSACTION_SOURCES' own
+      // comment), so there is no scenario where a role should be able to
+      // set this without also holding plots.mark_sold.
+      function _plotTransactionSourceOK() {
+        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['transactionSource'])
+          || hasPerm('plots.mark_sold');
+      }
+      // Governance hardening P2.9: a transition INTO 'sold' or 'unavailable'
+      // must carry a non-empty statusChangeReason — same principle as
+      // properties' availabilityReason above, applied to plots' own status
+      // field (which has two "finalizing" values, not just one).
+      //
+      // P0-2 fix: this used to accept a STALE reason already sitting on the
+      // document from a prior, unrelated transition — reasonSize()>0 was
+      // checked against the post-merge value, not this write's own diff, so
+      // an .update() that omitted statusChangeReason entirely still passed
+      // as long as some old string happened to be stored there already
+      // (exactly the bug already fixed for properties' availabilityReason
+      // above — see _isPropertySoldReasonOK()'s own comment). Also extended
+      // to require a FRESH reason when REVERSING a plot back out of 'sold'
+      // (available/reserved/on_hold/etc.), not just when entering it —
+      // undoing a finalized sale is exactly as consequential as making one
+      // (mirrors plots.mark_sold's own direction-aware _plotStatusOK()
+      // above). 'unavailable' stays entry-only exactly as before — no
+      // reversal-from-unavailable requirement was asked for or added here.
+      function _plotStatusReasonOK() {
+        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+          || (!(request.resource.data.get('status', '').lower() in ['sold', 'unavailable'])
+              && resource.data.get('status', '').lower() != 'sold')
+          || (request.resource.data.diff(resource.data).affectedKeys().hasAny(['statusChangeReason'])
+              && request.resource.data.get('statusChangeReason', '').size() > 0);
+      }
+      // Field allowlist for the managingAgentId ownership branch — CRITICAL
+      // fix (audit finding F-1). Was completely unrestricted: any managing
+      // agent could silently mark their own site's plots 'sold', set
+      // transactionSource:'external' to dodge commission, hijack clientId,
+      // or inflate price right before a staff-driven sale to inflate the
+      // commission calculatePlotCommission() later derives from it. There
+      // is currently no "edit an existing plot" UI feature at all (creation
+      // and status-change are the only two write paths — confirmed by
+      // reading every plots/{id} write in index.html), so this allowlist is
+      // deliberately narrow: true descriptive content only, nothing that
+      // touches status, transactionSource, ownership, or price/commission
+      // integrity. Price is intentionally excluded even though it's a
+      // plausible "content" field, because it feeds
+      // calculatePlotCommission()'s formula directly and unsupervised —
+      // legitimate price corrections go through isAdminOrStaff() instead.
+      function _isPlotOwnerContentEditOK() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'plotNumber','plotLabel','size','isCorner','facesRoad','shape','mapPosition','currency',
+          'updatedAt','updatedBy'
+        ]);
+      }
+      // A client cancelling their own reservation may only move status back
+      // to 'available' (clearing the reservation fields) — never to 'sold'
+      // or any other value, and never once the plot has already actually
+      // been sold. Previously this branch let a client with a matching
+      // clientId set status to ANY value including 'sold', self-finalizing
+      // a sale with zero staff/payment involvement.
+      function _isClientOwnReservationCancelOK() {
+        return resource.data.get('status', '').lower() != 'sold'
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status','clientId','reservedAt','reservedUntil','updatedAt','updatedBy'])
+          && request.resource.data.get('status', '').lower() == 'available';
+      }
+      // No isRole('agent') gate here, matching the original branch exactly:
+      // managingAgentId is set to whichever account created the site
+      // (index.html's submitSiteForm() writes `managingAgentId: uid`
+      // unconditionally, for agent/developer/staff creators alike), so a
+      // role restriction here would silently break plot management for
+      // developer-created sites — _callerIsActive() plus the content
+      // allowlist above is the actual fix, not narrowing who this applies to.
+      allow update: if (isAdminOrStaff() && _plotStatusOK() && _plotTransactionSourceOK() && _plotStatusReasonOK())
+                    || (isAuth() && _callerIsActive()
+                        && get(/databases/$(database)/documents/sites/$(resource.data.siteId))
+                           .data.managingAgentId == request.auth.uid
+                        && _isPlotOwnerContentEditOK())
+                    || (isAuth() && _callerIsActive() && resource.data.clientId == request.auth.uid
+                        && _isClientOwnReservationCancelOK());
+      allow delete: if false;
+    }
+
+    match /site_enquiries/{enquiryId} {
+      allow read:   if isAdminOrStaff()
+                    || (isAuth() && resource.data.clientId == request.auth.uid)
+                    || (isAuth() && resource.data.agentId  == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields();
+      allow update: if isAdminOrStaff()
+                    || (isAuth() && resource.data.agentId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    // ── CEO vs Operations Director governance ─────────
+    // See isCEO()/isDirector()/isSeniorManager() above. Two tiers below:
+    // CEO-write/staff-read (strategy + major contracts — director can VIEW
+    // but never write), and CEO-only with zero director involvement at all
+    // (shares, governance docs, registration, loans/asset disposals, senior
+    // staff actions) — matching the governance spec's own section 3 example
+    // (`allow read, write: if isCEO()`) exactly.
+
+    match /strategyDocuments/{id} {
+      allow read:   if isAdminOrStaff();
+      allow create: if isCEO() && hasStandardFields();
+      allow update: if isCEO();
+      allow delete: if false;
+    }
+
+    match /majorContracts/{id} {
+      // Legal Adviser reviews/annotates contracts (via contractReviews
+      // below) but never holds signing authority — deniedActions:
+      // ["sign_contracts_on_company_behalf"]. Read access here is already
+      // covered by isAdminOrStaff() (Legal is staff-tier); write stays
+      // CEO-only, unchanged — this comment just documents why Legal is
+      // deliberately NOT added to the write side.
+      allow read:   if isAdminOrStaff();
+      allow create: if isCEO() && hasStandardFields();
+      allow update: if isCEO();
+      allow delete: if false;
+    }
+
+    match /shareStructure/{id} {
+      allow read, write: if isCEO();
+    }
+
+    match /governanceDocuments/{id} {
+      allow read, write: if isCEO();
+    }
+
+    match /companyRegistration/{id} {
+      allow read, write: if isCEO();
+    }
+
+    match /loansAndAssetDisposals/{id} {
+      allow read, write: if isCEO();
+    }
+
+    match /seniorStaffActions/{id} {
+      allow read, write: if isCEO();
+    }
+
+    // Director's normal day-to-day operating scope — full access, no CEO
+    // gate. Distinct from the general isAdminOrStaff() tier: scoped to just
+    // CEO + Director per the governance spec, not every staff-tier role.
+    // ⚠ UNBUILT (confirmed via full-repo grep, 2026-07-26): no client code
+    // or Cloud Function anywhere writes to this collection, directly or via
+    // the /approvals dynamic-write cascade — this rule is scaffolding for a
+    // UI that was never built, not a currently-active feature. It will show
+    // 0 documents in any dashboard forever, not due to a bug. If this
+    // feature is confirmed abandoned rather than pending, this block can be
+    // safely removed; leaving it in place costs nothing and doesn't weaken
+    // any other rule.
+    match /dailyOperations/{id} {
+      allow read:   if isCEO() || isDirector();
+      allow create: if (isCEO() || isDirector()) && hasStandardFields();
+      allow update: if isCEO() || isDirector();
+      allow delete: if false;
+    }
+
+    match /reports/{id} {
+      // Final Management Org Chart's structured reporting system extends
+      // this collection (create isn't duplicated as a second collection) —
+      // it started as a CEO/Director-only "our own internal notes" shape
+      // (PR before this one) and is broadened here to a real submittedBy/
+      // recipients-scoped model any staff-tier role can use: every one of
+      // the 9 governance roles must be able to submit reports up their own
+      // reportsTo chain, but a report's whole point is routed visibility,
+      // not company-wide — so read is scoped to the actual audience
+      // (submitter, a listed recipient, or an executive), not a blanket
+      // isAdminOrStaff() read. Old CEO/Director-authored docs (no
+      // submittedBy/recipients fields) remain readable via the
+      // isCEO()||isDirector() branch exactly as before.
+      allow read:   if isAdminOrStaff()
+                    && (isCEO() || isDirector()
+                        || resource.data.get('submittedBy', '') == request.auth.uid
+                        || request.auth.uid in resource.data.get('recipients', []));
+      allow create: if isAdminOrStaff() && hasStandardFields()
+                    && request.resource.data.get('submittedBy', request.auth.uid) == request.auth.uid;
+      allow update: if isCEO() || isDirector()
+                    || (isAuth() && resource.data.get('submittedBy', '') == request.auth.uid);
+      allow delete: if false;
+    }
+
+    // ⚠ UNBUILT (confirmed via full-repo grep, 2026-07-26): no client code
+    // or Cloud Function anywhere writes to this collection — see the same
+    // note on dailyOperations above; applies identically here.
+    match /suggestions/{id} {
+      allow read:   if isCEO() || isDirector();
+      allow create: if (isCEO() || isDirector()) && hasStandardFields();
+      allow update: if isCEO() || isDirector();
+      allow delete: if false;
+    }
+
+    match /approvals/{id} {
+      // Director-facing escalation workflow for actions above their budget
+      // limit / outside their normal scope — modeled on payout_requests
+      // above, NOT the naive "client sets status freely" shape: create pins
+      // to safe unverified defaults, no client update (CEO included) may
+      // ever touch serverVerified, and the actual approve/reject transition
+      // requires serverVerified already true. onApprovalCreated
+      // (functions/index.js, Admin SDK) is the only path to
+      // serverVerified:true; onApprovalDecided performs the real privileged
+      // write to the target collection (via sourceDocRef/type) server-side
+      // once CEO approves. Same P0.1 security pattern already proven here.
+      allow read:   if isCEO() || isAdmin()
+                    || (isAuth() && resource.data.requestedBy == request.auth.uid);
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.requestedBy == request.auth.uid
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.serverVerified == false
+                    && request.resource.data.decidedBy == null
+                    && request.resource.data.decidedAt == null;
+      // Decision authority: isCEO() always (unchanged, covers every approval
+      // type that predates the Final Org Chart work), isAdmin() always (new
+      // — Ultimate Authority / absent-staff fallback: an Admin-only company
+      // with no CEO account must still be able to decide an escalated
+      // approval; mirrors the same admin-inclusive fix applied to
+      // onApprovalDecided in functions/index.js), OR the caller's uid is
+      // listed in the request's own `routedTo` array. routedTo lets a
+      // deniedActions-triggered request (see index.html's requestApproval())
+      // be routed to whichever of a role's reportsTo superiors should decide
+      // it (e.g. HR's routes to Operations Director OR CEO, either
+      // sufficient) without hardcoding CEO as the only possible approver.
+      // Purely additive: a doc with no routedTo field falls back to
+      // isCEO()/isAdmin() exactly as before (resource.data.get('routedTo',
+      // []) is empty, so the `in` check can never match), so this doesn't
+      // change behavior for any of the existing CEO-only approval types.
+      allow update: if request.resource.data.serverVerified == resource.data.serverVerified
+                    && (isCEO() || isAdmin() || (isAuth() && request.auth.uid in resource.data.get('routedTo', [])))
+                    && resource.data.status == 'pending'
+                    && resource.data.serverVerified == true
+                    && request.resource.data.status in ['approved', 'rejected'];
+      allow delete: if false;
+    }
+
+    match /budgetRequests/{id} {
+      // Director may approve directly within their own budgetApprovalLimit
+      // (users/{uid}.budgetApprovalLimit, admin/CEO-settable only — see the
+      // users/{uid} update rule above); above the limit, direct update is
+      // denied here and the real UI routes the action through /approvals
+      // instead. CEO always has full access.
+      allow read:   if isAdminOrStaff();
+      allow create: if isAuth() && hasStandardFields()
+                    && request.resource.data.requestedBy == request.auth.uid
+                    && request.resource.data.status == 'pending';
+      allow update: if isCEO()
+                    || (isDirector()
+                        && resource.data.amount <= callerDoc().data.get('budgetApprovalLimit', 0));
+      allow delete: if false;
+    }
+
+    // ── Final Management Org Chart — HR, Finance, Legal department
+    // collections (extends the CEO vs Operations Director governance work
+    // above with department-scoped access via inDept(), see deptOfRole()).
+    // "recruitment" from the org-chart spec isn't a separate collection —
+    // it's the existing job_postings/job_applications collections above,
+    // already isAdminOrStaff()-gated (HR already has that access as a
+    // staff-tier role); duplicating it here would just be a second,
+    // disconnected copy of the same data.
+
+    // ⚠ UNBUILT (confirmed via full-repo grep, 2026-07-26): no client code
+    // or Cloud Function anywhere writes to this collection — see the same
+    // note on dailyOperations above; applies identically here.
+    match /employeeRecords/{id} {
+      allow read:   if inDept('HR') || isExecutive();
+      allow create: if (inDept('HR') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('HR') || isExecutive();
+      allow delete: if false;
+    }
+
+    // ⚠ UNBUILT (confirmed via full-repo grep, 2026-07-26): no client code
+    // or Cloud Function anywhere writes to this collection — see the same
+    // note on dailyOperations above; applies identically here.
+    match /legalCompliance/{id} {
+      allow read:   if inDept('Legal') || isExecutive();
+      allow create: if (inDept('Legal') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('Legal') || isExecutive();
+      allow delete: if false;
+    }
+
+    match /contractReviews/{id} {
+      // Legal reviews/annotates contracts here — this is NOT signing
+      // authority, which stays on majorContracts (CEO-only write, above).
+      allow read:   if inDept('Legal') || isExecutive();
+      allow create: if (inDept('Legal') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('Legal') || isExecutive();
+      allow delete: if false;
+    }
+
+    match /financeTransactions/{id} {
+      // Director of Finance's deniedActions includes "spend_above_limit" —
+      // same budgetApprovalLimit field/pattern as budgetRequests above:
+      // Finance can create directly only within their own limit; above it,
+      // the create is denied here and the real UI routes it through
+      // /approvals instead (routedTo resolved from their reportsTo, which
+      // for Director of Finance is [CEO, Operations Director]). Executive
+      // always bypasses the limit.
+      allow read:   if inDept('Finance') || isExecutive();
+      allow create: if isExecutive()
+                    || (inDept('Finance')
+                        && request.resource.data.amount <= callerDoc().data.get('budgetApprovalLimit', 0));
+      allow update: if isExecutive();
+      allow delete: if false;
+    }
+
+    match /bankAccounts/{id} {
+      // "open_new_account_unilaterally" — Finance can read account data but
+      // can never create or delete an account; that stays Executive-only.
+      allow read:   if inDept('Finance') || isExecutive();
+      allow create, delete: if isExecutive();
+      allow update: if isExecutive();
+    }
+
+    // ── Role-verification pass: 4 department collections with no prior
+    // scaffolding (unlike employeeRecords/legalCompliance/contractReviews/
+    // financeTransactions above, which the Final Org Chart work already
+    // defined) — same inDept()-scoped shape, added for Chief Broker,
+    // Marketing Manager, CustomerSupport Manager, and IT Manager's own
+    // primary write actions.
+
+    match /sales_targets/{id} {
+      // Chief Broker sets targets; visible read-only to the actual sales
+      // force (isInternalTeam() includes 'agent') — there is no distinct
+      // "Sales Manager" role in this app (deptOfRole() has no such
+      // mapping), so "Sales" in the org-chart sense IS Brokerage/agents.
+      allow read:   if isInternalTeam() || isExecutive();
+      allow create: if (inDept('Brokerage') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('Brokerage') || isExecutive();
+      allow delete: if false;
+    }
+
+    match /campaigns/{id} {
+      allow read:   if inDept('Marketing') || isExecutive();
+      allow create: if (inDept('Marketing') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('Marketing') || isExecutive();
+      allow delete: if false;
+    }
+
+    match /support_tickets/{id} {
+      allow read:   if inDept('CustomerSupport') || isExecutive();
+      allow create: if (inDept('CustomerSupport') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('CustomerSupport') || isExecutive();
+      allow delete: if false;
+    }
+
+    match /system_changes/{id} {
+      allow read:   if inDept('IT') || isExecutive();
+      allow create: if (inDept('IT') || isExecutive()) && hasStandardFields();
+      allow update: if inDept('IT') || isExecutive();
+      allow delete: if false;
+    }
+  }
+}

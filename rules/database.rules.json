@@ -1,0 +1,19 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "properties": {
+      ".read": true
+    },
+    "agents": {
+      ".read": true
+    },
+
+    "adminAlerts": {
+      "$alertId": {
+        ".write": "auth != null && !data.exists()"
+      }
+    }
+  }
+}
